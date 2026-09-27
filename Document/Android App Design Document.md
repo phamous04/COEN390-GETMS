@@ -2,7 +2,7 @@
 
 ## 0. Project Summary
 
-A wearable EMG + IMU sensor system captures muscle activation and limb motion while a patient performs prescribed exercises (e.g. arm raises). Data streams over BLE to a **native Android app** (Kotlin + Jetpack Compose — required by the course project brief), which processes it in real time and syncs it to a Supabase (Postgres) backend. The system extracts clinically meaningful features per session — range of motion, speed, smoothness, fatigue, bilateral asymmetry — and presents them through two in-app views: a simple, motivating progress view for the patient, and a detailed, drillable analytics dashboard for the clinician.
+A wearable EMG + IMU sensor system captures muscle activation and limb motion while a patient performs prescribed exercises (e.g. arm raises). Data streams over BLE to a **native Android app** (Kotlin + Jetpack Compose — required by the course project brief), which processes it in real time and syncs it to Firebase. The system extracts clinically meaningful features per session — range of motion, speed, smoothness, fatigue, bilateral asymmetry — and presents them through two in-app views: a simple, motivating progress view for the patient, and a detailed, drillable analytics dashboard for the clinician.
 
 The project brief requires an Android app combined with sensors/actuators and basic data analytics — this design satisfies all three: the ESP32 sensor units, the Android BLE/processing app, and the analytics/dashboard layer.
 
@@ -40,8 +40,7 @@ There is no 3D visualization component — this was considered and dropped; the 
                              ↓
                     ┌──────────────────┐
                     │  Patient Metrics  │
-                    │  (Supabase/       │
-                    │   Postgres)       │
+                    │  (Firestore)      │
                     └──────────────────┘
                              ↓
                   ┌──────────┴──────────┐
@@ -59,8 +58,8 @@ There is no 3D visualization component — this was considered and dropped; the 
 |---|---|---|
 | Sampling + basic filtering | Firmware (ESP32) | Reduce BLE payload, keep noise off the wire |
 | Rep segmentation, real-time feedback | Android app (Kotlin) | Needed live for the rep counter and in-session feedback |
-| Full feature extraction (smoothness, fatigue, asymmetry) | Android app at session end, or a Supabase Edge Function | Heavier computation (FFT for fatigue, SPARC for smoothness); fine to run once per session rather than continuously |
-| Storage / cross-session aggregation | Supabase Postgres + Storage | Structured metrics as relational tables (queryable with SQL), raw signal traces in Supabase Storage (too large/unstructured for table rows) |
+| Full feature extraction (smoothness, fatigue, asymmetry) | Android app at session end, or a Cloud Function | Heavier computation (FFT for fatigue, SPARC for smoothness); fine to run once per session rather than continuously |
+| Storage / cross-session aggregation | Firestore + Cloud Storage | Structured metrics in Firestore, raw signal traces in Cloud Storage (too large/unstructured for Firestore docs) |
 | Dashboards | Android app, role-gated (patient vs clinician view) | One codebase, satisfies the "Android app" project requirement directly |
 
 ---
@@ -117,7 +116,7 @@ Fully native — a hard requirement of the project brief, not just an implementa
 |---|---|---|
 | BLE | **Kable** | Coroutines/Flow-native BLE library — makes managing two simultaneous GATT connections (one per limb) far cleaner than raw `BluetoothGatt` |
 | Charts | **Vico** | Compose-native charting for the trend/bar charts in the dashboards (§7) — avoids wrapping a View-based library like MPAndroidChart |
-| Backend client | **supabase-kt** | Official Kotlin client for Supabase — typed Postgrest queries, Auth, and Storage from the same library |
+| Backend client | **Firebase Android SDK** (Auth, Firestore, Cloud Storage KTX modules) | Official Kotlin-friendly client for all three services under one project |
 
 ### Architecture
 
@@ -141,8 +140,8 @@ Android App (Kotlin, Jetpack Compose)
 │   ├── Real-time: light filtering + rep counting for live feedback
 │   └── End-of-session: full feature extraction (§6), batched
 │
-└── Supabase Layer (Kotlin, via supabase-kt)
-    └── Auth, Postgrest (metrics tables), Storage (raw traces), sync
+└── Firebase Layer (Kotlin)
+    └── Auth, Firestore (metrics), Cloud Storage (raw traces), sync
 ```
 
 ### Live session flow
@@ -150,7 +149,7 @@ Android App (Kotlin, Jetpack Compose)
 1. Clinician/patient selects exercise (e.g. "Arm raise ×10").
 2. App connects to both sensor units, confirms signal quality (impedance/contact check if available, or a quick baseline read).
 3. Guided countdown → patient performs reps → app segments reps in real time, shows live rep counter and signal feedback.
-4. On completion: app runs full feature extraction, writes session + metrics rows to Supabase, uploads raw trace to Supabase Storage.
+4. On completion: app runs full feature extraction, writes session document + metrics to Firestore, uploads raw trace to Cloud Storage.
 
 ---
 
@@ -264,7 +263,7 @@ Session 5   █████████
 Session 10  ███████████████
 ```
 
-Implementation: bar/line charts per metric using Vico (Compose-native), driven directly by Postgrest queries against Supabase (e.g. `SELECT ... FROM session_metrics WHERE patient_id = ? AND exercise_id = ? ORDER BY session_date`).
+Implementation: bar/line charts per metric using Vico (Compose-native), driven directly by Firestore queries.
 
 ### Patient view
 
@@ -272,112 +271,103 @@ Simpler and motivational — streak count, personal bests, a couple of headline 
 
 ---
 
-## 8. Backend — Supabase (Postgres)
+## 8. Backend — Firebase
 
-### Why Supabase over a NoSQL option (e.g. Firebase)
+### Firestore collections
 
-- The core product is trend/aggregate analytics over structured session data — "ROM trend for patient X across all sessions," "asymmetry trend by exercise" — these are natural SQL `GROUP BY`/`ORDER BY`/window-function queries, not a good fit for a document store.
-- **Row-Level Security (RLS)**, written as SQL policies on each table, enforces "patient sees only their own data, clinician sees only assigned patients" at the database level — not just app-side logic.
-- Auth, Postgrest (auto-generated REST API), and Storage (for raw traces) are all included, same convenience as Firebase.
-- It's plain Postgres underneath — standard SQL, portable, no proprietary query language.
-- Latency is a non-issue for this design: live feedback during a session runs entirely on-device from BLE data and never touches Supabase; Supabase is only hit once at session-end (write) and on dashboard load (read) — neither is latency-sensitive.
-
-### Schema (tables)
-
-**users**
-```sql
-id uuid primary key,
-role text check (role in ('patient', 'clinician')),
-name text,
-clinician_id uuid references users(id)  -- null for clinicians
+**Users**
+```json
+{ "userId": "123", "role": "patient", "name": "John Doe", "clinicianId": "c1" }
 ```
 
-**calibrations**
-```sql
-id uuid primary key,
-user_id uuid references users(id),
-limb text check (limb in ('affected', 'unaffected')),
-channel text check (channel in ('flexor', 'extensor')),
-baseline_rest numeric,
-baseline_mvc numeric,
-recorded_at timestamptz
+**Calibrations** *(per user, per limb, per channel)*
+```json
+{
+  "userId": "123",
+  "limb": "affected",
+  "channel": "flexor",
+  "baselineRest": 120,
+  "baselineMVC": 3400,
+  "recordedAt": "timestamp"
+}
 ```
 
-**exercises**
-```sql
-id uuid primary key,
-name text,
-prescribed_reps int
+**Exercises**
+```json
+{ "exerciseId": "ex_armraise", "name": "Arm Raise", "prescribedReps": 10 }
 ```
 
-**sessions**
-```sql
-id uuid primary key,
-user_id uuid references users(id),
-exercise_id uuid references exercises(id),
-start_time timestamptz,
-end_time timestamptz,
-reps_completed int,
-raw_trace_path text  -- Supabase Storage object path
+**Sessions**
+```json
+{
+  "sessionId": "abc123",
+  "userId": "123",
+  "exerciseId": "ex_armraise",
+  "startTime": "timestamp",
+  "endTime": "timestamp",
+  "repsCompleted": 10,
+  "rawTraceRef": "gs://.../abc123.bin"
+}
 ```
 
-**session_metrics**
-```sql
-id uuid primary key,
-session_id uuid references sessions(id),
-limb text check (limb in ('affected', 'unaffected')),
-rom numeric,
-speed numeric,
-smoothness numeric,
-emg_activation numeric,
-variability numeric,
-fatigue_mdf numeric
+**Session Metrics** *(one doc per session, nested by limb, for easy full-session reads)*
+```json
+{
+  "sessionId": "abc123",
+  "affected": {
+    "rom": 81, "speed": 0.61, "smoothness": 0.72,
+    "emgActivation": 0.39, "variability": 0.09, "fatigueMdf": 118
+  },
+  "unaffected": {
+    "rom": 88, "speed": 0.66, "smoothness": 0.78,
+    "emgActivation": 0.41, "variability": 0.07, "fatigueMdf": 124
+  },
+  "asymmetry": { "rom": 0.083, "speed": 0.079, "emgActivation": 0.05 }
+}
 ```
 
-**session_asymmetry**
-```sql
-id uuid primary key,
-session_id uuid references sessions(id),
-metric text,       -- 'rom', 'speed', 'emg_activation', etc.
-asymmetry_value numeric
+**Clinicians**
+```json
+{ "clinicianId": "c1", "name": "Dr. Smith", "patientIds": ["123", "124"] }
 ```
 
-A query like "ROM trend for patient X, arm-raise exercise, across sessions" is one SQL statement joining `sessions` → `session_metrics`, filtered and ordered — directly backing the chart in §7.
+### Querying trend data
+
+A chart like "ROM trend for patient X, arm-raise exercise, across sessions" (§7) is built by querying `Sessions` filtered by `userId` + `exerciseId`, ordered by `startTime`, then reading the matching `Session Metrics` docs by `sessionId` — a couple of chained queries done client-side in Kotlin, rather than a single joined query. Fine at this project's scale (one patient, tens of sessions); worth being aware of as a pattern that gets more awkward if the dataset or query complexity grows substantially.
 
 ### Raw signal storage
 
-Raw EMG/IMU traces are high-volume time series — stored as a binary/CSV blob per session in **Supabase Storage**, referenced by `raw_trace_path` in the `sessions` table. The "raw signals" drill-down level fetches and plots this on demand, not loaded by default.
+Raw EMG/IMU traces are high-volume time series — **not** stored as Firestore documents. Store as a binary/CSV blob per session in Cloud Storage, referenced by `rawTraceRef` in the session document. The "raw signals" drill-down level in the dashboard fetches and plots this on demand, rather than loading it by default.
 
 ---
 
 ## 9. Security & Privacy
 
-- Supabase Auth; role stored on the `users` table.
-- Row-Level Security policies enforcing patient/clinician data isolation directly in Postgres — e.g. a patient's `SELECT` policy restricts to `user_id = auth.uid()`, a clinician's restricts to `user_id IN (SELECT id FROM users WHERE clinician_id = auth.uid())`.
-- Same RLS model extends to Storage bucket access for raw traces.
-- This is health-adjacent data tied to an identified patient — decide early whether to treat it under formal health-data handling (encryption at rest, retention policy, audit logging) even at MVP scale.
+- Firebase Authentication; role-based access (patient can only see their own data; clinician can only see their assigned patients).
+- Firestore security rules enforcing that isolation server-side, not just in the UI.
+- This is health-adjacent data tied to an identified patient — decide early whether to treat it under formal health-data handling (encryption at rest, retention policy, audit logging) even at MVP scale. Affects how much of this document's Firebase schema and rules need hardening before any real patient data touches it.
 
 ---
 
 ## 10. Testing Plan
 
 - **Unit**: rep segmentation accuracy, feature calculations (ROM, SPARC, MDF, asymmetry formula) against synthetic/known signals.
-- **Integration**: dual-BLE-connection stability (Kable), Supabase sync (Postgrest writes, Storage uploads), calibration persistence.
+- **Integration**: dual-BLE-connection stability (Kable), Firestore/Cloud Storage sync, calibration persistence.
 - **Validation**: compare app-computed ROM/speed against a reference (e.g. manual goniometer reading, video motion tracking) to establish measurement accuracy before trusting the clinical metrics.
-- **UI**: drill-down navigation (Patient → Exercise → Session → Metrics → Raw signals), dashboard rendering correctness, RLS policy correctness (patient cannot query another patient's data).
+- **UI**: drill-down navigation (Patient → Exercise → Session → Metrics → Raw signals), dashboard rendering correctness, security rule correctness (patient cannot query another patient's data).
 - **Performance**: BLE latency across two simultaneous connections, session-end processing time, battery consumption per unit.
 
 ---
 
 ## 11. Development Roadmap
 
-1. **Project setup** — Android Studio project (Kotlin/Compose), Supabase project + schema (§8), GitHub repo, ESP32 firmware skeleton (×2 units)
+1. **Project setup** — Android Studio project (Kotlin/Compose), Firebase project, GitHub repo, ESP32 firmware skeleton (×2 units)
 2. **Firmware core** — sampling, on-device conditioning, BLE GATT service, per-unit identification, timestamping
 3. **Dual BLE connectivity (mobile)** — Kable-based connect/manage both limb units concurrently, tagged streams
-4. **Calibration system** — per-limb, per-channel MVC/rest calibration flow, Supabase integration
+4. **Calibration system** — per-limb, per-channel MVC/rest calibration flow, Firestore integration
 5. **Signal processing + rep segmentation** — real-time filtering, live rep counter and signal feedback
 6. **Feature extraction engine** — ROM, speed, smoothness (SPARC), consistency, EMG activation, timing, fatigue (MDF), coordination, asymmetry index
-7. **Data platform** — session/metrics tables in Supabase, RLS policies, raw trace upload to Storage
+7. **Data platform** — session/metrics schema in Firestore, security rules, raw trace upload to Cloud Storage
 8. **Patient view** — simplified progress dashboard (Vico charts)
 9. **Clinician dashboard** — full drill-down (Patient → Exercise → Session → Metrics → Raw signals), trend charts
 10. **Validation & testing** — accuracy validation against reference measurement, full test plan from §10
@@ -397,5 +387,5 @@ Raw EMG/IMU traces are high-volume time series — stored as a binary/CSV blob p
 
 - **Embedded**: ESP32 firmware ×2 (sampling, conditioning, BLE GATT, calibration, timestamping)
 - **Android App**: Native app (Kotlin, Jetpack Compose, Kable for BLE, Vico for charts) — dual BLE, calibration, live session view, signal processing, feature extraction, patient view, clinician drill-down dashboard
-- **Backend**: Supabase (Auth, Postgres schema in §8, Storage for raw traces, RLS policies)
+- **Backend**: Firebase (Auth, Firestore schema in §8, Cloud Storage for raw traces, security rules)
 - **Documentation**: this design doc, BLE characteristic spec, feature-extraction algorithm reference (formulas in §6), database schema, validation report
