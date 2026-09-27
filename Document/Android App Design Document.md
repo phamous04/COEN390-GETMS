@@ -75,23 +75,30 @@ There is no 3D visualization component — this was considered and dropped; the 
 
 ## 2. Hardware
 
-### Sensors / components (single unit)
+### Chosen from the available lab inventory
 
-- **MyoWare 2.0 EMG** ×2 — flexor + extensor channel.
-- **IMU**: BNO055 (9-DOF, onboard sensor fusion).
-- **ESP32** (dual-core).
-- **TP4056** — LiPo charge management.
-- **MAX17048** (or similar) — battery fuel gauge.
+- **Microcontroller: ESP-32S WiFi + BT Development board** — classic dual-core ESP32, giving genuine FreeRTOS (native to ESP-IDF, which the Arduino-ESP32 core runs on top of) for the sampling/processing/BLE task split described below. More processing headroom than a single-core alternative, useful if fusion/filtering computation grows.
+- **IMU: MPU-6050** — 6-DOF (accelerometer + gyroscope, no magnetometer). Well-documented, cheap, widely used with ESP32; connects over I2C.
 
-### Single-device tradeoff
+### Bought separately (not in the lab inventory)
 
-Halves the BOM and firmware/enclosure work versus the earlier two-unit design. The cost: the two arms are never recorded *simultaneously*, so asymmetry is computed from two separate same-visit recordings rather than one synchronized stream. For this project's exercises (short, controlled reps like arm raises), that's a reasonable tradeoff — see the protocol note in §10 for how to keep the comparison fair.
+- **EMG sensor** ×1 (as you noted, sourced yourselves) — wired into the ESP32's ADC pins for flexor + extensor channels.
+- **Power**: the inventory list is sensors/dev-boards only, no LiPo charging/fuel-gauge ICs — you'll still need a small LiPo charge circuit (e.g. a TP4056 module) and battery, or confirm with your instructor whether USB-tethered operation is acceptable for a course demo.
 
-### Power / mechanical
+### No onboard sensor fusion — needs a software fusion filter
 
-- LiPo sized against duty cycle — EMG at 500–1000 Hz + IMU + active BLE is the main draw.
-- Physical on/off switch + low-battery cutoff.
-- Elastic strap + gel electrodes designed for **quick, repeatable placement on either arm**, since the whole protocol depends on the strap going on consistently each time it's moved. Motion artifact from a loose or inconsistently placed strap is the most common EMG failure mode — worth extra design attention given it's now moved mid-session.
+The MPU-6050 gives raw accelerometer + gyroscope data only — fusion into a usable joint-angle estimate has to run in firmware. A **complementary filter** (simpler, and sufficient without a magnetometer) or a **Madgwick/Mahony filter** using just accel+gyro (6-DOF mode) combining the two sensors is standard practice here and runs comfortably on the ESP32. For short, bounded exercises like arm raises, drift over a session lasting seconds to a couple minutes is negligible — no magnetometer needed at this timescale.
+
+> Known caveat: the ESP32's ADC is noisier and less linear than some alternatives, particularly at low signal amplitudes — worth keeping in mind for EMG signal quality, since EMG is a low-amplitude analog signal. Plan to add analog conditioning (e.g. a simple RC low-pass, or rely on the EMG sensor board's own onboard amplification/filtering if it has one) ahead of the ADC pin rather than relying on the ESP32 ADC alone.
+
+### Single-device tradeoff (unchanged from before)
+
+One device, worn on one arm at a time, halves the BOM and firmware/enclosure work versus a two-unit design. The cost: the two arms are never recorded *simultaneously*, so asymmetry is computed from two separate same-visit recordings rather than one synchronized stream — see the protocol note in §10.
+
+### Mechanical
+
+- Elastic strap + gel electrodes designed for **quick, repeatable placement on either arm**, since the protocol depends on the strap going on consistently each time it's moved. Motion artifact from a loose or inconsistently placed strap is the most common EMG failure mode — worth extra design attention given it's now moved mid-session.
+- Board + battery (if used) + MPU-6050 breakout need to fit in a compact enclosure attached to the strap.
 
 ---
 
@@ -99,17 +106,17 @@ Halves the BOM and firmware/enclosure work versus the earlier two-unit design. T
 
 ### Framework
 
-Arduino for MVP → migrate sampling-critical tasks to FreeRTOS tasks/queues as timing needs tighten.
+Arduino-ESP32 core, which runs on top of **ESP-IDF's FreeRTOS** — real RTOS tasks for the sampling/processing/BLE split, as you specifically wanted.
 
 ### Core responsibilities
 
-1. **Sensor sampling task** — EMG at 500–1000 Hz, IMU at 50–100 Hz, fixed-rate timer.
-2. **On-device signal conditioning** — rectify + smooth (RMS envelope) each EMG channel; raw IMU passed through onboard BNO055 fusion.
-3. **BLE GATT service** — characteristics for EMG channel(s), IMU orientation (quaternion), battery, calibration command, device status.
-4. **Calibration routine** — capture rest baseline and max-contraction (MVC) baseline per channel on command; run **each time the device is placed on a new arm**, since electrode position and muscle baseline differ per limb. Store in flash and send to the app for cloud storage per user, per limb, per recording.
+1. **Sensor sampling task** — EMG at 500–1000 Hz (analog read), IMU (MPU-6050) at 50–100 Hz, fixed-rate timer.
+2. **On-device signal conditioning** — rectify + smooth (RMS envelope) each EMG channel; run a complementary or Madgwick/Mahony filter (6-DOF, accel+gyro) on the raw MPU-6050 data to produce a fused orientation estimate.
+3. **BLE GATT service** — characteristics for EMG channel(s), fused IMU orientation (quaternion or Euler), battery (if a fuel gauge is included), calibration command, device status.
+4. **Calibration routine** — capture rest baseline and max-contraction (MVC) baseline per channel on command; run **each time the device is placed on a new arm**, since electrode position and muscle baseline differ per limb. Send to the app for cloud storage per user, per limb, per recording.
 5. **Timestamping** — attach a monotonic device timestamp to each sample (useful for rep segmentation and signal alignment even within a single recording).
-6. **Scheduler** — sampling, processing, and BLE notification as separate tasks/queues so BLE traffic doesn't stall sampling.
-7. **Power management** — sleep/low-power BLE intervals when idle.
+6. **FreeRTOS tasks** — sampling, filtering/fusion, and BLE notification as separate FreeRTOS tasks communicating via queues, so BLE traffic doesn't stall sampling.
+7. **Power management** — sleep/low-power BLE intervals when idle, if running on battery.
 
 ---
 
@@ -167,7 +174,7 @@ Android App (Kotlin, Jetpack Compose)
 
 ### IMU pipeline
 
-1. Orientation already fused on-device (BNO055) → quaternion stream.
+1. Raw accel+gyro fused on-device via complementary/Madgwick filter (§2, §3) → orientation stream.
 2. Convert to joint angle of interest (e.g. shoulder flexion angle) via a fixed reference frame calibrated at the start of each recording (patient holds neutral "rest" pose on that arm).
 3. Low-pass filter (e.g. 4th-order Butterworth, ~5–10 Hz cutoff) to remove sensor noise before feature extraction.
 4. Differentiate filtered angle → angular velocity → angular acceleration, for speed/accel features.
@@ -380,7 +387,7 @@ Since the same device tests both arms sequentially rather than simultaneously, *
 
 ## 11. Development Roadmap
 
-1. **Project setup** — Android Studio project (Kotlin/Compose), Firebase project, GitHub repo, ESP32 firmware skeleton (single unit)
+1. **Project setup** — Android Studio project (Kotlin/Compose), Firebase project, GitHub repo, ESP-32S firmware skeleton
 2. **Firmware core** — sampling, on-device conditioning, BLE GATT service, timestamping
 3. **BLE connectivity (mobile)** — Kable-based connect/reconnect flow, including the mid-session arm-switch handoff
 4. **Calibration system** — per-limb, per-recording MVC/rest calibration flow, Firestore integration
@@ -401,12 +408,13 @@ Since the same device tests both arms sequentially rather than simultaneously, *
 3. **Exercise library scope** — is "arm raise" the only exercise for MVP, or should the pipeline generalize to multiple exercise types from the start?
 4. **Strap/enclosure quick-swap design** — confirm the physical strap can be moved arm-to-arm quickly and consistently without a full re-fitting each time, since this now happens every session.
 5. **Order randomization enforcement** — decide whether the app enforces/suggests alternating first-tested limb automatically, or leaves it to the clinician's judgment (with logging either way).
+6. **Power sourcing** — confirm whether battery power (LiPo + charge circuit, sourced outside the lab inventory) is needed, or whether USB-tethered operation is acceptable for the course deliverable, which would simplify the enclosure considerably.
 
 ---
 
 ## Deliverables
 
-- **Embedded**: ESP32 firmware, single unit (sampling, conditioning, BLE GATT, calibration, timestamping)
+- **Embedded**: ESP-32S firmware, single unit (FreeRTOS tasks for sampling, conditioning, sensor fusion, BLE GATT, calibration, timestamping)
 - **Android App**: Native app (Kotlin, Jetpack Compose, Kable for BLE, Vico for charts) — BLE, arm-switch flow, calibration, live session view, signal processing, feature extraction, asymmetry computation, patient view, clinician drill-down dashboard
 - **Backend**: Firebase (Auth, Firestore schema in §8, Cloud Storage for raw traces, security rules)
 - **Documentation**: this design doc, BLE characteristic spec, feature-extraction algorithm reference (formulas in §6), database schema, validation report
