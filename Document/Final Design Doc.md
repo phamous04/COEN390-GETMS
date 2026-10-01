@@ -87,7 +87,7 @@ requires the frequency content that an RMS envelope discards.
 | MPU-6050 (6-DOF) | Lab | I2C @ 400 kHz |
 | EMG sensor, 2 channels | Purchased | Ch A = anterior deltoid (agonist), Ch B = posterior deltoid (antagonist) |
 | Gel electrodes + elastic strap | Purchased | Quick-swap design (§3.4) |
-| Power | TBD (§3.3) | USB-tethered or LiPo + TP4056 |
+| Power | TBD IEEE???? (§3.3) | USB-tethered or LiPo + TP4056 |
 
 ### 3.2 Wiring rules
 - EMG outputs go to **ADC1** pins only (ADC2 is unusable while the radio is active).
