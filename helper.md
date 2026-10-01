@@ -44,10 +44,9 @@ Use a prefix + short, lowercase description with dashes:
 
 | Prefix | Use for | Example |
 |---|---|---|
-| `feature/` | New functionality | `feature/login-page` |
+| `feature/<tasks name>` | New functionality | `feature/login-page` |
 | `fix/` | Bug fixes | `fix/crash-on-empty-name` |
 | `docs/` | Documentation | `docs/update-readme` |
-| `chore/` | Cleanup, config, dependencies | `chore/update-packages` |
 
 **One task per branch.** Small branches are easier to review and merge.
 
