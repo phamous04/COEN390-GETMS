@@ -3,4 +3,7 @@
 
 FILE(GLOB_RECURSE app_sources ${CMAKE_SOURCE_DIR}/src/*.*)
 
-idf_component_register(SRCS ${app_sources})
+# Bench test called from app_main; test/ is not built by default.
+list(APPEND app_sources ${CMAKE_SOURCE_DIR}/test/emg_test.c)
+
+idf_component_register(SRCS ${app_sources} PRIV_REQUIRES esp_adc esp_timer)
