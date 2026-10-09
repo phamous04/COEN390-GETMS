@@ -1,4 +1,2 @@
 # COEN390-GETMS
 
-
-hello
