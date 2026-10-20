@@ -104,7 +104,9 @@ fun BleSensorScreen(
                         )
                         Text(
                             text = "Upper Limb Sensor Unit (ESP32)",
-                            style = MaterialTheme.typography.bodySmall,
+                            style = MaterialTheme.typography.bod
+
+                                    ySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
