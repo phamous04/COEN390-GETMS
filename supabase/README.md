@@ -50,8 +50,7 @@ The Android build reads these values from `local.properties` and uses them for e
 authentication. Rebuild the app after changing them. In Profile, users can create an account,
 sign in, and sign out; the client restores saved sessions. If email confirmation is enabled,
 confirm the address before signing in. The app does not handle confirmation deep links.
-Recording upload and synchronization are deferred; their earlier implementation is documented
-in [the integration guide](../ANDROID_SUPABASE_INTEGRATION.md).
+Recording upload and synchronization are deferred to a later story.
 
 ## Secrets rules
 
