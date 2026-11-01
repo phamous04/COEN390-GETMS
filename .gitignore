@@ -1,0 +1,19 @@
+# Local credentials and environment files
+**/local.properties
+.env
+.env.*
+
+# Android/Gradle local and generated files
+**/.gradle/
+**/build/
+**/.cxx/
+**/captures/
+*.iml
+
+# Local signing keys
+*.jks
+*.keystore
+
+# IDE and OS files
+.idea/
+.DS_Store
