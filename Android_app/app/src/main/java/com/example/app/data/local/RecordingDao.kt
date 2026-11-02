@@ -13,4 +13,7 @@ interface RecordingDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(recording: RecordingEntity)
+
+    @Query("DELETE FROM recordings")
+    suspend fun clearAll()
 }
