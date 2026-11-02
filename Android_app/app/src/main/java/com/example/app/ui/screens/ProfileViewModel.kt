@@ -3,6 +3,7 @@ package com.example.app.ui.screens
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.app.data.local.AppDatabase
 import com.example.app.data.remote.AccountRepository
 import com.example.app.data.remote.SupabaseProvider
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -33,7 +34,10 @@ class ProfileViewModel(app: Application) : AndroidViewModel(app) {
         if (account.userId == null) _message.value = "Check your email to confirm your account"
     }
 
-    fun signOut() = submit { account.signOut() }
+    fun signOut() = submit {
+        account.signOut()
+        AppDatabase.get(getApplication()).recordingDao().clearAll()
+    }
 
     private fun submit(action: suspend () -> Unit) {
         if (!SupabaseProvider.configured) return
