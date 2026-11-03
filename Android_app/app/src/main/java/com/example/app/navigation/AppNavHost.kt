@@ -22,7 +22,8 @@ import androidx.navigation.compose.rememberNavController
 import com.example.app.ui.components.ReBandIcons
 import com.example.app.ui.screens.AuthState
 import com.example.app.ui.screens.AuthViewModel
-import com.example.app.ui.screens.ExerciseSessionScreen
+import com.example.app.ui.BleSensorScreen
+import com.example.app.ui.screens.DeviceScanScreen
 import com.example.app.ui.screens.ExercisesScreen
 import com.example.app.ui.screens.HistoryScreen
 import com.example.app.ui.screens.HomeScreen
@@ -30,6 +31,7 @@ import com.example.app.ui.screens.LoadingScreen
 import com.example.app.ui.screens.LoginScreen
 import com.example.app.ui.screens.SettingsScreen
 import com.example.app.ui.screens.SignUpScreen
+import com.example.app.ui.screens.WearableViewModel
 import com.example.app.ui.theme.Teal
 import com.example.app.ui.theme.TealLight
 
@@ -40,8 +42,9 @@ object Routes {
     const val EXERCISES = "exercises"
     const val HISTORY = "history"
     const val SETTINGS = "settings"
-    // Replace this destination with the team's activity screen once it is merged.
-    const val EXERCISE_SESSION = "exercise_session"
+    const val DEVICES = "devices"
+    // Teammates' live sensor/recording screen, opened by Start Exercise.
+    const val SENSOR = "sensor"
 }
 
 private data class Tab(val route: String, val label: String, val icon: ImageVector)
@@ -84,11 +87,15 @@ private fun MainNavHost(email: String?, authViewModel: AuthViewModel) {
     val currentRoute = backStack?.destination?.route
     val busy by authViewModel.busy.collectAsState()
     val error by authViewModel.error.collectAsState()
+    // Activity-scoped, so Home, Settings and the scanner all read the same wearable state.
+    val wearableViewModel: WearableViewModel = viewModel()
+    val wearable by wearableViewModel.uiState.collectAsState()
+    val fullScreen = currentRoute == Routes.DEVICES || currentRoute == Routes.SENSOR
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         bottomBar = {
-            if (currentRoute != Routes.EXERCISE_SESSION) {
+            if (!fullScreen) {
                 NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
                     tabs.forEach { tab ->
                         NavigationBarItem(
@@ -115,14 +122,31 @@ private fun MainNavHost(email: String?, authViewModel: AuthViewModel) {
     ) { padding ->
         NavHost(navController = nav, startDestination = Routes.HOME, modifier = Modifier.padding(padding)) {
             composable(Routes.HOME) {
-                HomeScreen(email, onStartExercise = { nav.navigate(Routes.EXERCISE_SESSION) })
+                HomeScreen(
+                    email,
+                    wearable = wearable,
+                    onConnectWearable = { nav.navigate(Routes.DEVICES) },
+                    onStartExercise = { if (wearable.canStartExercise) nav.navigate(Routes.SENSOR) },
+                )
             }
             composable(Routes.EXERCISES) { ExercisesScreen() }
             composable(Routes.HISTORY) { HistoryScreen() }
             composable(Routes.SETTINGS) {
-                SettingsScreen(email, busy = busy, error = error, onLogout = authViewModel::signOut)
+                SettingsScreen(
+                    email,
+                    busy = busy,
+                    error = error,
+                    wearable = wearable,
+                    onConnectWearable = { nav.navigate(Routes.DEVICES) },
+                    onDisconnectWearable = wearableViewModel::disconnect,
+                    onLogout = {
+                        wearableViewModel.disconnect()
+                        authViewModel.signOut()
+                    },
+                )
             }
-            composable(Routes.EXERCISE_SESSION) { ExerciseSessionScreen(onBack = { nav.popBackStack() }) }
+            composable(Routes.DEVICES) { DeviceScanScreen(wearableViewModel, onBack = { nav.popBackStack() }) }
+            composable(Routes.SENSOR) { BleSensorScreen(onBack = { nav.popBackStack() }) }
         }
     }
 }

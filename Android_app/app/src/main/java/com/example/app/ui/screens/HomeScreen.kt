@@ -1,5 +1,6 @@
 package com.example.app.ui.screens
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -12,6 +13,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -28,7 +30,12 @@ import com.example.app.ui.theme.Teal
 import com.example.app.ui.theme.TealDark
 
 @Composable
-fun HomeScreen(email: String?, onStartExercise: () -> Unit) {
+fun HomeScreen(
+    email: String?,
+    wearable: WearableUiState,
+    onConnectWearable: () -> Unit,
+    onStartExercise: () -> Unit,
+) {
     Column(
         Modifier
             .fillMaxSize()
@@ -52,7 +59,17 @@ fun HomeScreen(email: String?, onStartExercise: () -> Unit) {
             }
         }
 
-        WearableStatusCard()
+        WearableStatusCard(wearable) {
+            when (wearable.status) {
+                WearableStatus.Connected, WearableStatus.Connecting -> Unit
+                else -> OutlinedButton(
+                    onClick = onConnectWearable,
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                    shape = RoundedCornerShape(14.dp),
+                    border = BorderStroke(1.5.dp, Teal),
+                ) { Text("Connect Wearable", color = Teal, style = MaterialTheme.typography.titleMedium) }
+            }
+        }
 
         Spacer(Modifier.height(12.dp))
         Column(
@@ -68,6 +85,21 @@ fun HomeScreen(email: String?, onStartExercise: () -> Unit) {
                 textAlign = TextAlign.Center,
             )
         }
-        PrimaryButton("Start Exercise", onClick = onStartExercise, height = 64.dp)
+        // Enabled only once the shared BLE connection is up and the ReBand service is validated.
+        PrimaryButton(
+            "Start Exercise",
+            onClick = onStartExercise,
+            enabled = wearable.canStartExercise,
+            height = 64.dp,
+        )
+        if (!wearable.canStartExercise) {
+            Text(
+                "Connect your ReBand wearable to start an exercise.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
     }
 }

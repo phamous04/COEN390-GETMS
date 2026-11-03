@@ -1,5 +1,6 @@
 package com.example.app.ui.components
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -39,6 +40,9 @@ import com.example.app.ui.theme.Orange
 import com.example.app.ui.theme.StatusGrey
 import com.example.app.ui.theme.Teal
 import com.example.app.ui.theme.TealLight
+import com.example.app.ble.DeviceStatus
+import com.example.app.ui.screens.WearableStatus
+import com.example.app.ui.screens.WearableUiState
 
 @Composable
 fun ReBandLogo(modifier: Modifier = Modifier, large: Boolean = false) {
@@ -106,26 +110,78 @@ fun IconBadge(icon: ImageVector, size: Dp = 48.dp) {
 }
 
 /**
- * Wearable connection status. BLE is not on this branch yet, so callers use the default
- * `connected = false`. Pass the real BLE connection state here once it is merged.
+ * Wearable connection status from the shared BLE connection. [actions] holds the buttons the
+ * hosting screen offers (connect, disconnect, ...).
  */
 @Composable
-fun WearableStatusCard(modifier: Modifier = Modifier, connected: Boolean = false) {
-    ReBandCard(modifier) {
-        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconBadge(ReBandIcons.Bluetooth)
-            Column(Modifier.weight(1f).padding(horizontal = 14.dp)) {
-                Text(
-                    if (connected) "Wearable: Connected" else "Wearable: Not Connected",
-                    style = MaterialTheme.typography.titleMedium,
-                )
-                Text(
-                    if (connected) "Your ReBand is ready" else "Device pairing coming soon",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+fun WearableStatusCard(
+    state: WearableUiState,
+    modifier: Modifier = Modifier,
+    actions: @Composable () -> Unit = {},
+) {
+    val (title, subtitle) = when (state.status) {
+        WearableStatus.BluetoothOff -> "Bluetooth Off" to "Turn on Bluetooth to connect your wearable."
+        WearableStatus.NotConnected -> "Not Connected" to "Connect your ReBand wearable to start exercising."
+        WearableStatus.Scanning -> "Searching…" to "Looking for nearby ReBand wearables."
+        WearableStatus.Connecting -> "Connecting…" to (state.deviceName ?: "Setting up your wearable.")
+        WearableStatus.Connected -> "Connected" to (state.deviceName ?: "ReBand wearable")
+        WearableStatus.Failed -> "Connection Failed" to (state.error ?: "Please try again.")
+        WearableStatus.Lost -> "Disconnected Unexpectedly" to (state.error ?: "Please reconnect.")
+    }
+    val accent = when (state.status) {
+        WearableStatus.Connected -> Teal
+        WearableStatus.Connecting, WearableStatus.Scanning -> Orange
+        WearableStatus.Failed, WearableStatus.Lost -> MaterialTheme.colorScheme.error
+        else -> StatusGrey
+    }
+    val titleColor = if (accent == StatusGrey || accent == Orange) MaterialTheme.colorScheme.onSurface else accent
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+        border = if (state.status == WearableStatus.Connected) BorderStroke(1.5.dp, Teal) else null,
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconBadge(ReBandIcons.Bluetooth)
+                Column(Modifier.weight(1f).padding(horizontal = 14.dp)) {
+                    Text("Wearable: $title", style = MaterialTheme.typography.titleMedium, color = titleColor)
+                    Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                if (state.status == WearableStatus.Connecting || state.status == WearableStatus.Scanning) {
+                    CircularProgressIndicator(Modifier.size(18.dp), color = Orange, strokeWidth = 2.dp)
+                } else {
+                    Box(Modifier.size(12.dp).clip(CircleShape).background(accent))
+                }
             }
-            Box(Modifier.size(12.dp).clip(CircleShape).background(if (connected) Teal else StatusGrey))
+            state.deviceStatus?.let { DeviceStatusLine(it) }
+            actions()
+        }
+    }
+}
+
+/** Firmware-reported state, shown separately from the BLE link (getms_ble_spec.h Status). */
+@Composable
+private fun DeviceStatusLine(status: DeviceStatus) {
+    val state = when (status.state.toInt()) {
+        0x00 -> "Idle"
+        0x01 -> "Streaming"
+        else -> "Unknown"
+    }
+    val fw = "${status.fwVersion shr 8}.${status.fwVersion and 0xFF}"
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(
+            "Device state: $state · Firmware $fw",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (status.errorFlags.toInt() and 0x01 != 0) {
+            Text(
+                "Sensor calibration data missing on the device: EMG readings are approximate.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = Orange,
+            )
         }
     }
 }
