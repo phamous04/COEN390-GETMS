@@ -5,6 +5,7 @@ import io.github.jan.supabase.auth.providers.builtin.Email
 class AccountRepository {
     val sessionStatus get() = SupabaseProvider.auth.sessionStatus
     val userId get() = SupabaseProvider.auth.currentUserOrNull()?.id
+    val email get() = SupabaseProvider.auth.currentUserOrNull()?.email
 
     suspend fun signIn(email: String, password: String) {
         SupabaseProvider.auth.signInWith(Email) {

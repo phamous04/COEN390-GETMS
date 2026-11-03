@@ -1,74 +1,56 @@
 package com.example.app.ui.screens
 
-import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.app.ui.components.ComingSoon
+import com.example.app.ui.components.ReBandIcons
+import com.example.app.ui.components.ScreenTitle
+import com.example.app.ui.theme.Teal
 
 @Composable
-private fun ScreenScaffold(title: String, content: @Composable () -> Unit) {
-    Column(
-        modifier = Modifier.fillMaxSize().padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Text(title, style = MaterialTheme.typography.headlineMedium)
-        content()
+fun LoadingScreen() {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        CircularProgressIndicator(color = Teal)
     }
 }
 
 @Composable
-fun HomeScreen(onOpenHistory: () -> Unit, onOpenProfile: () -> Unit) {
-    ScreenScaffold("Home") {
-        Button(onClick = onOpenHistory) { Text("History") }
-        Button(onClick = onOpenProfile) { Text("Profile") }
+fun ExercisesScreen() {
+    Column(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 16.dp)) {
+        ScreenTitle("Exercises")
+        ComingSoon("Exercise library", ReBandIcons.Exercises, "Your prescribed exercises will be listed here.")
     }
 }
 
 @Composable
-fun HistoryScreen(onBack: () -> Unit, viewModel: HistoryViewModel = viewModel()) {
-    val recordings by viewModel.recordings.collectAsState()
-    ScreenScaffold("History") {
-        Text("Local recordings: ${recordings.size}")
-        Button(onClick = onBack) { Text("Back") }
+fun HistoryScreen() {
+    Column(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 16.dp)) {
+        ScreenTitle("History")
+        ComingSoon("Session history", ReBandIcons.History, "Your past exercise sessions will appear here.")
     }
 }
 
+/** Placeholder for "Start Exercise" until the team's activity/recording screen is merged. */
 @Composable
-fun ProfileScreen(onBack: () -> Unit, viewModel: ProfileViewModel = viewModel()) {
-    val message by viewModel.message.collectAsState()
-    val signedIn by viewModel.signedIn.collectAsState()
-    var email by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
-    ScreenScaffold("Profile") {
-        Text(message)
-        if (signedIn) {
-            Button(onClick = viewModel::signOut) { Text("Sign out") }
-        } else {
-            OutlinedTextField(value = email, onValueChange = { email = it }, label = { Text("Email") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email))
-            OutlinedTextField(value = password, onValueChange = { password = it },
-                label = { Text("Password") }, visualTransformation = PasswordVisualTransformation())
-            Button(onClick = { viewModel.signIn(email, password); password = "" }) { Text("Sign in") }
-            Button(onClick = { viewModel.signUp(email, password); password = "" }) { Text("Create account") }
+fun ExerciseSessionScreen(onBack: () -> Unit) {
+    Column(Modifier.fillMaxSize().padding(horizontal = 8.dp, vertical = 8.dp)) {
+        TextButton(onClick = onBack) {
+            Text("‹ Back", color = Teal, style = MaterialTheme.typography.titleMedium)
         }
-        Button(onClick = onBack) { Text("Back") }
+        ComingSoon(
+            "Exercise Session",
+            ReBandIcons.Exercises,
+            "The live exercise session with your wearable will open here.",
+        )
     }
 }
