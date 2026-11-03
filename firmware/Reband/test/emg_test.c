@@ -12,7 +12,7 @@
 // Cable Shield leads (MID/END/REF) carry millivolt skin signals that only the
 // sensor's amplifier can read, so they never go to the ESP32.
 //
-// All inputs are on ADC1: ADC2 is unusable while the radio is on.
+// All inputs are on ADC1: ADC2 is unusable while the radio is on.Q 
 #define EMG_ADC_UNIT    ADC_UNIT_1
 #define EMG_ADC_ATTEN   ADC_ATTEN_DB_12 // widest input range, sensor swings 0-3.3 V
 #define OVERSAMPLE      16
