@@ -35,8 +35,9 @@ private fun ScreenScaffold(title: String, content: @Composable () -> Unit) {
 }
 
 @Composable
-fun HomeScreen(onOpenHistory: () -> Unit, onOpenProfile: () -> Unit) {
+fun HomeScreen(onOpenSensor: () -> Unit, onOpenHistory: () -> Unit, onOpenProfile: () -> Unit) {
     ScreenScaffold("Home") {
+        Button(onClick = onOpenSensor) { Text("Sensor") }
         Button(onClick = onOpenHistory) { Text("History") }
         Button(onClick = onOpenProfile) { Text("Profile") }
     }
