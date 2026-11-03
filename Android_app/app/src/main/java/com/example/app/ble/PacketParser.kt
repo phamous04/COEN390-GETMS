@@ -16,6 +16,7 @@ object PacketParser {
     /**
      * Parses 86-byte EMG Packet:
      * seq u16 | t0_us u32 | 20 x (chA i16, chB i16)
+     * Only channel A is used: we have one EMG sensor and the firmware always sends chB = 0.
      */
     fun parseEmgPacket(data: ByteArray): EmgPacket? {
         if (data.size < EMG_PACKET_SIZE) return null
@@ -27,9 +28,9 @@ object PacketParser {
         val samples = ArrayList<EmgSample>(20)
         for (i in 0 until 20) {
             val chA = buffer.short.toInt()
-            val chB = buffer.short.toInt()
+            buffer.short // chB, unused
             val timestamp = t0Us + (i * EMG_SAMPLE_PERIOD_US)
-            samples.add(EmgSample(channelA = chA, channelB = chB, timestampUs = timestamp))
+            samples.add(EmgSample(channelA = chA, timestampUs = timestamp))
         }
 
         return EmgPacket(sequence = seq, t0Us = t0Us, samples = samples)

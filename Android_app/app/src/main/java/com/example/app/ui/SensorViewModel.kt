@@ -26,33 +26,30 @@ data class SensorUiState(
     val isStreaming: Boolean = false,
     val isDeviceReady: Boolean = false,
     val latestEmgChannelA: Int = 0,
-    val latestEmgChannelB: Int = 0,
     val latestPitchDegrees: Float = 0f,
     val latestQuaternion: Quaternion? = null,
     val metrics: StreamMetrics = StreamMetrics(),
     val angleTraceHistory: List<Float> = emptyList(),
     val emgTraceHistoryA: List<Int> = emptyList(),
-    val emgTraceHistoryB: List<Int> = emptyList(),
     val isBluetoothSupported: Boolean = true,
     val isBluetoothEnabled: Boolean = true
 )
 
 class SensorViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val bleManager = BleManager(application)
+    // Shared with the Home and Settings screens so there is only ever one connection.
+    private val bleManager = BleManager.get(application)
 
     private val _selectedDeviceAddress = MutableStateFlow<String?>(null)
     private val _selectedDeviceName = MutableStateFlow<String?>(null)
     private val _isStreaming = MutableStateFlow(false)
 
     private val _latestEmgA = MutableStateFlow(0)
-    private val _latestEmgB = MutableStateFlow(0)
     private val _latestPitch = MutableStateFlow(0f)
     private val _latestQuat = MutableStateFlow<Quaternion?>(null)
 
     private val _angleHistory = MutableStateFlow<List<Float>>(emptyList())
     private val _emgHistoryA = MutableStateFlow<List<Int>>(emptyList())
-    private val _emgHistoryB = MutableStateFlow<List<Int>>(emptyList())
 
     val uiState: StateFlow<SensorUiState> = combine(
         bleManager.scannedDevices,
@@ -63,13 +60,11 @@ class SensorViewModel(application: Application) : AndroidViewModel(application) 
         bleManager.deviceStatus,
         _isStreaming,
         _latestEmgA,
-        _latestEmgB,
         _latestPitch,
         _latestQuat,
         bleManager.streamMetrics,
         _angleHistory,
         _emgHistoryA,
-        _emgHistoryB,
         bleManager.bluetoothEnabled,
         bleManager.servicesReady
     ) { args ->
@@ -83,16 +78,14 @@ class SensorViewModel(application: Application) : AndroidViewModel(application) 
             deviceStatus = args[5] as DeviceStatus?,
             isStreaming = args[6] as Boolean,
             latestEmgChannelA = args[7] as Int,
-            latestEmgChannelB = args[8] as Int,
-            latestPitchDegrees = args[9] as Float,
-            latestQuaternion = args[10] as Quaternion?,
-            metrics = args[11] as StreamMetrics,
-            angleTraceHistory = args[12] as List<Float>,
-            emgTraceHistoryA = args[13] as List<Int>,
-            emgTraceHistoryB = args[14] as List<Int>,
+            latestPitchDegrees = args[8] as Float,
+            latestQuaternion = args[9] as Quaternion?,
+            metrics = args[10] as StreamMetrics,
+            angleTraceHistory = args[11] as List<Float>,
+            emgTraceHistoryA = args[12] as List<Int>,
             isBluetoothSupported = bleManager.isBluetoothSupported,
-            isBluetoothEnabled = args[15] as Boolean,
-            isDeviceReady = args[16] as Boolean
+            isBluetoothEnabled = args[13] as Boolean,
+            isDeviceReady = args[14] as Boolean
         )
     }.stateIn(
         scope = viewModelScope,
@@ -117,19 +110,12 @@ class SensorViewModel(application: Application) : AndroidViewModel(application) 
                 if (packet.samples.isNotEmpty()) {
                     val lastSample = packet.samples.last()
                     _latestEmgA.value = lastSample.channelA
-                    _latestEmgB.value = lastSample.channelB
 
                     // Append to rolling history (max 50 points)
                     val historyA = _emgHistoryA.value.toMutableList()
-                    val historyB = _emgHistoryB.value.toMutableList()
-                    packet.samples.forEach { sample ->
-                        historyA.add(sample.channelA)
-                        historyB.add(sample.channelB)
-                    }
+                    packet.samples.forEach { sample -> historyA.add(sample.channelA) }
                     while (historyA.size > 50) historyA.removeAt(0)
-                    while (historyB.size > 50) historyB.removeAt(0)
                     _emgHistoryA.value = historyA
-                    _emgHistoryB.value = historyB
                 }
             }
         }
@@ -165,7 +151,7 @@ class SensorViewModel(application: Application) : AndroidViewModel(application) 
     fun connect(device: BleDevice) {
         _selectedDeviceAddress.value = device.address
         _selectedDeviceName.value = device.name
-        bleManager.connect(device.address)
+        bleManager.connect(device.address, device.name)
     }
 
     fun disconnect() {
@@ -175,7 +161,6 @@ class SensorViewModel(application: Application) : AndroidViewModel(application) 
         _selectedDeviceName.value = null
         _angleHistory.value = emptyList()
         _emgHistoryA.value = emptyList()
-        _emgHistoryB.value = emptyList()
     }
 
     fun startStreaming() {
@@ -188,6 +173,7 @@ class SensorViewModel(application: Application) : AndroidViewModel(application) 
 
     override fun onCleared() {
         super.onCleared()
-        bleManager.close()
+        // Keep the shared connection open for the rest of the app; only stop the data stream.
+        if (_isStreaming.value) bleManager.stopStreaming()
     }
 }

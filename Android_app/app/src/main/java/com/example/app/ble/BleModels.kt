@@ -6,7 +6,9 @@ import kotlin.math.asin
 data class BleDevice(
     val name: String,
     val address: String,
-    val rssi: Int
+    val rssi: Int,
+    /** True when the device advertises the GETMS service UUID, i.e. it is a ReBand wearable. */
+    val isGetms: Boolean = false
 )
 
 enum class ConnectionState {
@@ -17,8 +19,8 @@ enum class ConnectionState {
 }
 
 data class EmgSample(
+    /** MyoWare 2.0 ENV output in millivolts (0-3300). */
     val channelA: Int,
-    val channelB: Int,
     val timestampUs: Long
 )
 

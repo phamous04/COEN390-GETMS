@@ -182,9 +182,7 @@ fun BleSensorScreen(
                     item {
                         EmgDataCard(
                             channelA = uiState.latestEmgChannelA,
-                            channelB = uiState.latestEmgChannelB,
-                            historyA = uiState.emgTraceHistoryA,
-                            historyB = uiState.emgTraceHistoryB
+                            historyA = uiState.emgTraceHistoryA
                         )
                     }
 
@@ -515,14 +513,12 @@ fun MetricStatItem(label: String, value: String) {
 @Composable
 fun EmgDataCard(
     channelA: Int,
-    channelB: Int,
-    historyA: List<Int>,
-    historyB: List<Int>
+    historyA: List<Int>
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
-                text = "EMG Sensors (2-Channel)",
+                text = "EMG Sensor",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold
             )
@@ -530,7 +526,7 @@ fun EmgDataCard(
 
             // Channel A
             Text(
-                text = "Channel A (Anterior Deltoid / Agonist): $channelA mV",
+                text = "EMG (Biceps): $channelA mV",
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.SemiBold
             )
@@ -544,38 +540,20 @@ fun EmgDataCard(
                 color = Color(0xFF1E88E5)
             )
 
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // Channel B
-            Text(
-                text = "Channel B (Posterior Deltoid / Antagonist): $channelB mV",
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.SemiBold
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-            LinearProgressIndicator(
-                progress = { (channelB.coerceIn(0, 3300) / 3300f) },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(8.dp)
-                    .clip(RoundedCornerShape(4.dp)),
-                color = Color(0xFFD81B60)
-            )
-
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Dual trace chart
+            // Live trace chart
             Text(
                 text = "Live EMG Signal Waveform",
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Spacer(modifier = Modifier.height(8.dp))
-            DualTraceCanvas(
-                dataA = historyA,
-                dataB = historyB,
-                colorA = Color(0xFF1E88E5),
-                colorB = Color(0xFFD81B60),
+            SingleTraceCanvas(
+                data = historyA.map { it.toFloat() },
+                lineColor = Color(0xFF1E88E5),
+                minY = 0f,
+                maxY = 3300f,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(100.dp)
@@ -654,50 +632,6 @@ fun ImuDataCard(
                     .fillMaxWidth()
                     .height(100.dp)
             )
-        }
-    }
-}
-
-@Composable
-fun DualTraceCanvas(
-    dataA: List<Int>,
-    dataB: List<Int>,
-    colorA: Color,
-    colorB: Color,
-    modifier: Modifier = Modifier
-) {
-    Canvas(
-        modifier = modifier
-            .background(Color(0xFF1E1E1E), shape = RoundedCornerShape(8.dp))
-            .padding(8.dp)
-    ) {
-        val width = size.width
-        val height = size.height
-
-        // Draw Channel A path
-        if (dataA.size >= 2) {
-            val pathA = Path()
-            val stepX = width / (dataA.size - 1).coerceAtLeast(1)
-            dataA.forEachIndexed { i, value ->
-                val x = i * stepX
-                val normY = (value.coerceIn(0, 3300) / 3300f)
-                val y = height - (normY * height)
-                if (i == 0) pathA.moveTo(x, y) else pathA.lineTo(x, y)
-            }
-            drawPath(path = pathA, color = colorA, style = Stroke(width = 3f))
-        }
-
-        // Draw Channel B path
-        if (dataB.size >= 2) {
-            val pathB = Path()
-            val stepX = width / (dataB.size - 1).coerceAtLeast(1)
-            dataB.forEachIndexed { i, value ->
-                val x = i * stepX
-                val normY = (value.coerceIn(0, 3300) / 3300f)
-                val y = height - (normY * height)
-                if (i == 0) pathB.moveTo(x, y) else pathB.lineTo(x, y)
-            }
-            drawPath(path = pathB, color = colorB, style = Stroke(width = 3f))
         }
     }
 }

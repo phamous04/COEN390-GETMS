@@ -40,7 +40,15 @@ import com.example.app.ui.theme.Orange
 import com.example.app.ui.theme.Teal
 
 @Composable
-fun SettingsScreen(email: String?, busy: Boolean, error: String?, onLogout: () -> Unit) {
+fun SettingsScreen(
+    email: String?,
+    busy: Boolean,
+    error: String?,
+    wearable: WearableUiState,
+    onConnectWearable: () -> Unit,
+    onDisconnectWearable: () -> Unit,
+    onLogout: () -> Unit,
+) {
     var confirmLogout by remember { mutableStateOf(false) }
     Column(
         Modifier
@@ -67,7 +75,19 @@ fun SettingsScreen(email: String?, busy: Boolean, error: String?, onLogout: () -
             }
         }
 
-        WearableStatusCard()
+        Text("Bluetooth", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        WearableStatusCard(wearable) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                when (wearable.status) {
+                    WearableStatus.Connected -> {
+                        SmallActionButton("Disconnect", MaterialTheme.colorScheme.error, Modifier.weight(1f), onDisconnectWearable)
+                        SmallActionButton("Rescan", Teal, Modifier.weight(1f), onConnectWearable)
+                    }
+                    WearableStatus.Connecting -> SmallActionButton("Cancel", MaterialTheme.colorScheme.error, Modifier.weight(1f), onDisconnectWearable)
+                    else -> SmallActionButton("Connect Wearable", Teal, Modifier.weight(1f), onConnectWearable)
+                }
+            }
+        }
 
         ReBandCard {
             Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -114,4 +134,14 @@ fun SettingsScreen(email: String?, busy: Boolean, error: String?, onLogout: () -
             dismissButton = { TextButton(onClick = { confirmLogout = false }) { Text("Cancel", color = Teal) } },
         )
     }
+}
+
+@Composable
+private fun SmallActionButton(text: String, color: Color, modifier: Modifier, onClick: () -> Unit) {
+    OutlinedButton(
+        onClick = onClick,
+        modifier = modifier.height(48.dp),
+        shape = RoundedCornerShape(14.dp),
+        border = BorderStroke(1.5.dp, color),
+    ) { Text(text, color = color, style = MaterialTheme.typography.titleMedium) }
 }
