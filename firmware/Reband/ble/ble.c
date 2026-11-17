@@ -1,12 +1,12 @@
-// GETMS GATT server on NimBLE (Final Design Doc §5).
-//
-// States: IDLE (advertising or connected) -> STREAMING (after START)
-//         -> IDLE (after STOP or disconnect, advertising resumes on disconnect).
+// GETMS GATT server on NimBLE. Transport only: Control writes are handed to
+// the session layer, which owns the device state and calls back in here to
+// publish Status, EMG packets and Rep Events.
 
 #include <stdio.h>
 #include <string.h>
 #include "ble.h"
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
 #include "nimble/nimble_port.h"
 #include "nimble/nimble_port_freertos.h"
 #include "host/ble_hs.h"
@@ -25,6 +25,7 @@ static const ble_uuid128_t svc_uuid = GETMS_UUID128(0x00);
 static const ble_uuid128_t emg_uuid = GETMS_UUID128(0x01);
 static const ble_uuid128_t status_uuid = GETMS_UUID128(0x03);
 static const ble_uuid128_t control_uuid = GETMS_UUID128(0x04);
+static const ble_uuid128_t rep_uuid = GETMS_UUID128(0x05);
 
 // Connection interval request, units of 1.25 ms: 15-30 ms (doc §5.2: <= 30 ms).
 #define CONN_ITVL_MIN 12
@@ -32,107 +33,106 @@ static const ble_uuid128_t control_uuid = GETMS_UUID128(0x04);
 #define SUPERVISION_TIMEOUT 400 // units of 10 ms = 4 s
 
 static ble_callbacks_t s_cb;
-static uint16_t s_fw_version;
 static uint8_t s_own_addr_type;
 static char s_name[16];
 
 static uint16_t s_emg_handle;
 static uint16_t s_status_handle;
 static uint16_t s_control_handle;
+static uint16_t s_rep_handle;
 
 static volatile uint16_t s_conn = BLE_HS_CONN_HANDLE_NONE;
 static volatile bool s_emg_subscribed;
-static volatile uint8_t s_state = GETMS_STATE_IDLE;
-static volatile uint8_t s_error_flags;
+static volatile bool s_status_subscribed;
+static volatile bool s_rep_subscribed;
+static volatile bool s_streaming;
+
+static uint8_t s_status[GETMS_STATUS_LEN];
+static portMUX_TYPE s_status_lock = portMUX_INITIALIZER_UNLOCKED;
 
 static void advertise(void);
 
-// ---- Status -----------------------------------------------------------------
+// ---- Outgoing ----------------------------------------------------------------
 
-static void status_notify(void)
+static esp_err_t notify(uint16_t handle, bool subscribed, const uint8_t *data, size_t len)
 {
-    // Notifies every client that subscribed to Status; no-op otherwise.
-    ble_gatts_chr_updated(s_status_handle);
+    uint16_t conn = s_conn;
+    if (!subscribed || conn == BLE_HS_CONN_HANDLE_NONE) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    struct os_mbuf *om = ble_hs_mbuf_from_flat(data, len);
+    if (om == NULL) {
+        return ESP_ERR_NO_MEM;
+    }
+    // Takes ownership of om, also on failure.
+    int rc = ble_gatts_notify_custom(conn, handle, om);
+    return rc == 0 ? ESP_OK : (rc == BLE_HS_ENOMEM ? ESP_ERR_NO_MEM : ESP_FAIL);
 }
 
-static void set_state(uint8_t state)
+void ble_set_status(const uint8_t *status)
 {
-    if (s_state != state) {
-        s_state = state;
-        status_notify();
-    }
+    taskENTER_CRITICAL(&s_status_lock);
+    memcpy(s_status, status, GETMS_STATUS_LEN);
+    taskEXIT_CRITICAL(&s_status_lock);
+    notify(s_status_handle, s_status_subscribed, status, GETMS_STATUS_LEN);
 }
 
-void ble_set_error_flags(uint8_t set, uint8_t clear)
+void ble_set_streaming(bool on)
 {
-    uint8_t flags = (s_error_flags | set) & ~clear;
-    if (flags != s_error_flags) {
-        s_error_flags = flags;
-        status_notify();
-    }
+    s_streaming = on;
 }
 
-static void stop_streaming(const char *why)
+uint16_t ble_mtu(void)
 {
-    if (s_state != GETMS_STATE_STREAMING) {
-        return;
+    uint16_t conn = s_conn;
+    return conn == BLE_HS_CONN_HANDLE_NONE ? 0 : ble_att_mtu(conn);
+}
+
+esp_err_t ble_send_emg(uint16_t seq, uint32_t t0_us, const int16_t *ch_a)
+{
+    if (!s_streaming) {
+        return ESP_ERR_INVALID_STATE;
     }
-    set_state(GETMS_STATE_IDLE);
-    s_cb.on_stop();
-    ESP_LOGI(TAG, "Streaming stopped (%s)", why);
+    uint8_t buf[GETMS_EMG_PACKET_LEN];
+    uint8_t *p = buf;
+    *p++ = seq & 0xff;
+    *p++ = seq >> 8;
+    for (int i = 0; i < 4; i++) {
+        *p++ = (t0_us >> (8 * i)) & 0xff;
+    }
+    for (int i = 0; i < GETMS_EMG_SAMPLES_PER_PACKET; i++) {
+        uint16_t a = (uint16_t)ch_a[i];
+        *p++ = a & 0xff;
+        *p++ = a >> 8;
+        *p++ = 0; // chB: no second sensor yet
+        *p++ = 0;
+    }
+    return notify(s_emg_handle, s_emg_subscribed, buf, sizeof(buf));
+}
+
+esp_err_t ble_send_rep(const uint8_t *event)
+{
+    return notify(s_rep_handle, s_rep_subscribed, event, GETMS_REP_EVENT_LEN);
 }
 
 // ---- GATT -------------------------------------------------------------------
 
-static int handle_command(uint16_t conn, uint8_t cmd)
-{
-    switch (cmd) {
-    case GETMS_CMD_START: {
-        if (s_state == GETMS_STATE_STREAMING) {
-            return 0;
-        }
-        uint16_t mtu = ble_att_mtu(conn);
-        if (mtu < GETMS_EMG_PACKET_LEN + 3) {
-            ESP_LOGW(TAG, "START refused: MTU %u too small, need >= %u", mtu, GETMS_EMG_PACKET_LEN + 3);
-            ble_set_error_flags(GETMS_ERR_MTU_TOO_SMALL, 0);
-            return GETMS_ATT_ERR_MTU_TOO_SMALL;
-        }
-        ble_set_error_flags(0, GETMS_ERR_MTU_TOO_SMALL);
-        if (!s_emg_subscribed) {
-            ESP_LOGW(TAG, "START before EMG notifications were enabled, data is dropped until they are");
-        }
-        set_state(GETMS_STATE_STREAMING);
-        s_cb.on_start();
-        ESP_LOGI(TAG, "Streaming started");
-        return 0;
-    }
-    case GETMS_CMD_STOP:
-        stop_streaming("STOP command");
-        return 0;
-    default:
-        ESP_LOGW(TAG, "Unknown control command 0x%02x", cmd);
-        return GETMS_ATT_ERR_UNKNOWN_CMD;
-    }
-}
-
 static int chr_access(uint16_t conn, uint16_t attr, struct ble_gatt_access_ctxt *ctxt, void *arg)
 {
     if (attr == s_status_handle && ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR) {
-        uint8_t buf[4] = {
-            s_state,
-            s_error_flags,
-            (uint8_t)(s_fw_version & 0xff),
-            (uint8_t)(s_fw_version >> 8),
-        };
+        uint8_t buf[GETMS_STATUS_LEN];
+        taskENTER_CRITICAL(&s_status_lock);
+        memcpy(buf, s_status, sizeof(buf));
+        taskEXIT_CRITICAL(&s_status_lock);
         return os_mbuf_append(ctxt->om, buf, sizeof(buf)) == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
     }
     if (attr == s_control_handle && ctxt->op == BLE_GATT_ACCESS_OP_WRITE_CHR) {
-        if (OS_MBUF_PKTLEN(ctxt->om) != 1) {
-            return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
-        }
-        uint8_t cmd;
-        os_mbuf_copydata(ctxt->om, 0, 1, &cmd);
-        return handle_command(conn, cmd);
+        uint8_t buf[GETMS_CMD_MAX_LEN] = {0};
+        uint16_t len = OS_MBUF_PKTLEN(ctxt->om);
+        os_mbuf_copydata(ctxt->om, 0, len < sizeof(buf) ? len : sizeof(buf), buf);
+        // The session validates it; a bad command ends in the ERROR state.
+        s_cb.on_command(buf, len);
+        return (len == 0 || len > GETMS_CMD_MAX_LEN) ? BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN : 0;
     }
     return BLE_ATT_ERR_UNLIKELY;
 }
@@ -160,41 +160,17 @@ static const struct ble_gatt_svc_def gatt_svcs[] = {
                 .flags = BLE_GATT_CHR_F_WRITE,
                 .val_handle = &s_control_handle,
             },
+            {
+                .uuid = &rep_uuid.u,
+                .access_cb = chr_access,
+                .flags = BLE_GATT_CHR_F_NOTIFY,
+                .val_handle = &s_rep_handle,
+            },
             {0},
         },
     },
     {0},
 };
-
-esp_err_t ble_send_emg(uint16_t seq, uint32_t t0_us, const int16_t *ch_a)
-{
-    uint16_t conn = s_conn;
-    if (s_state != GETMS_STATE_STREAMING || !s_emg_subscribed || conn == BLE_HS_CONN_HANDLE_NONE) {
-        return ESP_ERR_INVALID_STATE;
-    }
-
-    uint8_t buf[GETMS_EMG_PACKET_LEN];
-    uint8_t *p = buf;
-    *p++ = seq & 0xff;
-    *p++ = seq >> 8;
-    for (int i = 0; i < 4; i++) {
-        *p++ = (t0_us >> (8 * i)) & 0xff;
-    }
-    for (int i = 0; i < GETMS_EMG_SAMPLES_PER_PACKET; i++) {
-        uint16_t a = (uint16_t)ch_a[i];
-        *p++ = a & 0xff;
-        *p++ = a >> 8;
-        *p++ = 0; // chB: no second sensor yet
-        *p++ = 0;
-    }
-
-    struct os_mbuf *om = ble_hs_mbuf_from_flat(buf, sizeof(buf));
-    if (om == NULL) {
-        return ESP_ERR_NO_MEM;
-    }
-    // Takes ownership of om, also on failure.
-    return ble_gatts_notify_custom(conn, s_emg_handle, om) == 0 ? ESP_OK : ESP_FAIL;
-}
 
 // ---- GAP --------------------------------------------------------------------
 
@@ -223,22 +199,31 @@ static int gap_event(struct ble_gap_event *event, void *arg)
             .supervision_timeout = SUPERVISION_TIMEOUT,
         };
         ble_gap_update_params(s_conn, &params);
+        s_cb.on_connection(true);
         return 0;
 
     case BLE_GAP_EVENT_DISCONNECT:
         ESP_LOGI(TAG, "Disconnected (reason 0x%03x)", event->disconnect.reason);
-        stop_streaming("disconnected");
+        // Recording carries on; the app recovers missed reps with GET_REPS.
         s_conn = BLE_HS_CONN_HANDLE_NONE;
-        s_emg_subscribed = false;
+        s_emg_subscribed = s_status_subscribed = s_rep_subscribed = false;
+        s_cb.on_connection(false);
         advertise();
         return 0;
 
-    case BLE_GAP_EVENT_SUBSCRIBE:
-        if (event->subscribe.attr_handle == s_emg_handle) {
-            s_emg_subscribed = event->subscribe.cur_notify;
-            ESP_LOGI(TAG, "EMG notifications %s", s_emg_subscribed ? "on" : "off");
+    case BLE_GAP_EVENT_SUBSCRIBE: {
+        uint16_t h = event->subscribe.attr_handle;
+        bool on = event->subscribe.cur_notify;
+        if (h == s_emg_handle) {
+            s_emg_subscribed = on;
+        } else if (h == s_status_handle) {
+            s_status_subscribed = on;
+        } else if (h == s_rep_handle) {
+            s_rep_subscribed = on;
         }
+        ESP_LOGI(TAG, "Notifications %s on handle %u", on ? "on" : "off", h);
         return 0;
+    }
 
     case BLE_GAP_EVENT_MTU:
         ESP_LOGI(TAG, "MTU %u", event->mtu.value);
@@ -269,7 +254,7 @@ static void advertise(void)
     fields.uuids128_is_complete = 1;
     int rc = ble_gap_adv_set_fields(&fields);
     if (rc != 0) {
-        ESP_LOGE(TAG, "Setting advertising data failed (%d)", rc);
+        printf("ERROR: BLE advertising data failed (%d)\n", rc);
         return;
     }
 
@@ -280,7 +265,7 @@ static void advertise(void)
     rsp.name_is_complete = 1;
     rc = ble_gap_adv_rsp_set_fields(&rsp);
     if (rc != 0) {
-        ESP_LOGE(TAG, "Setting scan response failed (%d)", rc);
+        printf("ERROR: BLE scan response failed (%d)\n", rc);
         return;
     }
 
@@ -290,7 +275,7 @@ static void advertise(void)
     };
     rc = ble_gap_adv_start(s_own_addr_type, NULL, BLE_HS_FOREVER, &params, gap_event, NULL);
     if (rc != 0) {
-        ESP_LOGE(TAG, "Starting advertising failed (%d)", rc);
+        printf("ERROR: BLE advertising failed (%d)\n", rc);
         return;
     }
     ESP_LOGI(TAG, "Advertising as %s", s_name);
@@ -311,7 +296,7 @@ static void on_sync(void)
 
 static void on_reset(int reason)
 {
-    ESP_LOGW(TAG, "BLE stack reset (reason %d)", reason);
+    printf("ERROR: BLE stack reset (%d)\n", reason);
 }
 
 static void host_task(void *arg)
@@ -320,10 +305,9 @@ static void host_task(void *arg)
     nimble_port_freertos_deinit();
 }
 
-esp_err_t ble_init(const ble_callbacks_t *callbacks, uint16_t fw_version)
+esp_err_t ble_init(const ble_callbacks_t *callbacks)
 {
     s_cb = *callbacks;
-    s_fw_version = fw_version;
 
     esp_err_t err = nimble_port_init();
     if (err != ESP_OK) {
