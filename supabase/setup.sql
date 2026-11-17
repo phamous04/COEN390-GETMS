@@ -59,6 +59,13 @@ create policy "recordings_insert_own" on storage.objects
   for insert to authenticated
   with check (bucket_id = 'recordings' and (storage.foldername(name))[1] = auth.uid()::text);
 
+-- Deterministic <user_id>/<recording_id>.getms upserts make retries idempotent.
+drop policy if exists "recordings_update_own" on storage.objects;
+create policy "recordings_update_own" on storage.objects
+  for update to authenticated
+  using (bucket_id = 'recordings' and (storage.foldername(name))[1] = auth.uid()::text)
+  with check (bucket_id = 'recordings' and (storage.foldername(name))[1] = auth.uid()::text);
+
 drop policy if exists "recordings_delete_own" on storage.objects;
 create policy "recordings_delete_own" on storage.objects
   for delete to authenticated

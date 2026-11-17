@@ -50,7 +50,14 @@ The Android build reads these values from `local.properties` and uses them for e
 authentication. Rebuild the app after changing them. In Profile, users can create an account,
 sign in, and sign out; the client restores saved sessions. If email confirmation is enabled,
 confirm the address before signing in. The app does not handle confirmation deep links.
-Recording upload and synchronization are deferred to a later story.
+Recordings are saved offline and uploaded by WorkManager to
+`recordings/<user_id>/<recording_id>.getms`. On existing projects, apply
+[migrations/20261118000000_recording_upload_upserts.sql](./migrations/20261118000000_recording_upload_upserts.sql)
+to install the owner-scoped Storage UPDATE policy required for idempotent retries.
+Use this migration rather than rerunning the baseline setup, which replaces the clinician signup trigger function.
+The archive includes session metadata, sensor packets and a completion footer;
+no separate server recordings table is required by this feature.
+See [offline recording behavior and format](../Android_app/OFFLINE_RECORDINGS.md).
 
 ## 6. Clinician–patient pairing
 
