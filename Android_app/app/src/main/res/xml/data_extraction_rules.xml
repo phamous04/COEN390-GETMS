@@ -5,6 +5,10 @@
 -->
 <data-extraction-rules>
     <cloud-backup>
+        <exclude domain="file" path="recordings/" />
+        <exclude domain="database" path="getms.db" />
+        <exclude domain="database" path="getms.db-wal" />
+        <exclude domain="database" path="getms.db-shm" />
         <!-- TODO: Use <include> and <exclude> to control what is backed up.
         <include .../>
         <exclude .../>
@@ -16,4 +20,10 @@
         <exclude .../>
     </device-transfer>
     -->
+    <device-transfer>
+        <exclude domain="file" path="recordings/" />
+        <exclude domain="database" path="getms.db" />
+        <exclude domain="database" path="getms.db-wal" />
+        <exclude domain="database" path="getms.db-shm" />
+    </device-transfer>
 </data-extraction-rules>

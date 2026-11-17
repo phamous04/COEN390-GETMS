@@ -4,6 +4,7 @@ import android.app.Application
 import android.os.SystemClock
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.app.RecordingApplication
 import com.example.app.ble.BleManager
 import com.example.app.ble.DeviceErrors
 import com.example.app.ble.DeviceState
@@ -110,6 +111,8 @@ data class CalibrationValues(val romRefX10: Int, val mvcMv: Int, val baselineMv:
 class ExerciseViewModel(app: Application) : AndroidViewModel(app) {
     private val ble = BleManager.get(app)
     private val repo = ExerciseSessionRepository.get(app)
+    /** Offline raw-sensor capture (teammate's RecordingManager); this flow owns the device commands. */
+    private val sensorRecorder = (app as RecordingApplication).recordings.manager
 
     private val _state = MutableStateFlow(ExerciseUiState())
     val state: StateFlow<ExerciseUiState> = _state.asStateFlow()
@@ -480,6 +483,16 @@ class ExerciseViewModel(app: Application) : AndroidViewModel(app) {
         session = session?.copy(startedAtMillis = now, targetReps = status.targetReps, updatedAtMillis = now)
         persist()
         _state.update { it.copy(step = FlowStep.RECORDING, repCount = 0, cleanCount = 0, elapsedMs = 0, error = null) }
+        // Also keep the raw EMG stream of this set in a durable local file, linked to the session id
+        // and uploaded to Storage in the background. Capture only; it never sends START/STOP.
+        _state.value.exercisingArm?.let { arm ->
+            sensorRecorder.start(
+                exercise = "Bicep Curl",
+                arm = if (arm == Arm.LEFT) "Left" else "Right",
+                controlDevice = false,
+                sessionId = _state.value.sessionId,
+            )
+        }
         tickerJob?.cancel()
         tickerJob = viewModelScope.launch {
             while (isActive && _state.value.step == FlowStep.RECORDING) {
@@ -518,6 +531,7 @@ class ExerciseViewModel(app: Application) : AndroidViewModel(app) {
         if (s.step != FlowStep.RECORDING) return
         tickerJob?.cancel()
         clearPending()
+        sensorRecorder.stop(reason)
         val endedAt = System.currentTimeMillis()
         val duration = SystemClock.elapsedRealtime() - startElapsed
         _state.update { it.copy(step = FlowStep.FINISHING, elapsedMs = duration, waiting = "Saving session…") }

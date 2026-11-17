@@ -4,8 +4,8 @@ import android.app.Application
 import android.util.Patterns
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.app.RecordingApplication
 import com.example.app.data.ExerciseSessionRepository
-import com.example.app.data.local.AppDatabase
 import com.example.app.data.remote.AccountRepository
 import com.example.app.data.remote.SupabaseProvider
 import io.github.jan.supabase.exceptions.HttpRequestException
@@ -117,13 +117,15 @@ class AuthViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun signOut() = submit {
+        // Sensor capture is closed and kept on this device; it uploads when the owner signs in again.
+        (getApplication<Application>() as RecordingApplication).recordings.manager.stop("Signed out; recording saved on this device")
         val sessions = ExerciseSessionRepository.get(getApplication())
         // Upload finished sessions while the session JWT is still valid; failures stay queued locally.
         account.userId?.let { sessions.syncPending(it) }
         account.signOut()
-        AppDatabase.get(getApplication()).recordingDao().clearAll()
         // Exercise rows already on the server are removed from this phone; unsynced ones are kept
-        // (filtered by patient id) so they upload on the owner's next login.
+        // (filtered by patient id) so they upload on the owner's next login. Sensor recordings are
+        // kept per owner as well (they are never reassigned to another account).
         sessions.clearSyncedLocalCopies()
     }
 
