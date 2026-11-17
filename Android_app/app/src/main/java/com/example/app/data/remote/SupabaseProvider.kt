@@ -5,6 +5,8 @@ import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.auth.Auth
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.createSupabaseClient
+import io.github.jan.supabase.postgrest.Postgrest
+import io.github.jan.supabase.postgrest.postgrest
 
 /** The publishable key is client-visible. Database and Storage access still require user RLS. */
 object SupabaseProvider {
@@ -19,8 +21,11 @@ object SupabaseProvider {
                 autoLoadFromStorage = true
                 autoSaveToStorage = true
             }
+            // RPC access to the pairing functions; RLS and server-side checks still apply.
+            install(Postgrest)
         }
     }
 
     val auth get() = client.auth
+    val postgrest get() = client.postgrest
 }
