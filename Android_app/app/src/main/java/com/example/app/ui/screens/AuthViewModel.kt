@@ -13,6 +13,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
+/** Which side of the login toggle is selected. The backend still decides the real account type. */
+enum class LoginRole { Patient, Clinician }
+
 sealed interface AuthState {
     data object Loading : AuthState
     data object SignedOut : AuthState
@@ -31,6 +34,16 @@ class AuthViewModel(app: Application) : AndroidViewModel(app) {
     val error: StateFlow<String?> = _error
     private val _info = MutableStateFlow<String?>(null)
     val info: StateFlow<String?> = _info
+    private val _role = MutableStateFlow(LoginRole.Patient)
+    val role: StateFlow<LoginRole> = _role
+
+    /**
+     * Set by a fresh login: the account type the user picked on the toggle. Once the backend
+     * account type is known, it is compared with this (see [confirmRole] / [rejectRole]).
+     * Null for restored sessions and sign-ups.
+     */
+    private val _expectedRole = MutableStateFlow<LoginRole?>(null)
+    val expectedRole: StateFlow<LoginRole?> = _expectedRole
 
     init {
         // The Supabase client restores a saved session from storage, so users stay logged in.
@@ -45,14 +58,59 @@ class AuthViewModel(app: Application) : AndroidViewModel(app) {
     fun signIn(email: String, password: String) {
         val problem = validate(email, password, null)
         if (problem != null) return showError(problem)
-        submit { account.signIn(email, password) }
+        val chosen = _role.value
+        submit {
+            _expectedRole.value = chosen
+            try {
+                account.signIn(email, password)
+            } catch (e: Exception) {
+                _expectedRole.value = null
+                throw e
+            }
+        }
     }
 
-    fun signUp(email: String, password: String, confirm: String) {
-        val problem = validate(email, password, confirm)
+    fun selectRole(role: LoginRole) {
+        if (_role.value == role) return
+        _role.value = role
+        clearMessages()
+    }
+
+    fun confirmRole() {
+        _expectedRole.value = null
+    }
+
+    /** The account isn't the type picked on the toggle: sign out and point to the right side. */
+    fun rejectRole(actual: LoginRole) {
+        _expectedRole.value = null
+        viewModelScope.launch {
+            _busy.value = true
+            try {
+                // Only ends the session; local data is kept because it is the same person.
+                account.signOut()
+            } catch (_: Exception) {
+            } finally {
+                _busy.value = false
+            }
+            _role.value = actual
+            _info.value = null
+            _error.value = if (actual == LoginRole.Clinician) {
+                "This is a clinician account. We switched to Clinician login, so log in again here."
+            } else {
+                "This is a patient account. We switched to Patient login, so log in again here."
+            }
+        }
+    }
+
+    fun signUp(email: String, password: String, confirm: String, fullName: String, requestClinician: Boolean) {
+        val problem = when {
+            configured && fullName.isBlank() -> "Please enter your name."
+            configured && fullName.trim().length > MAX_NAME -> "Name must be $MAX_NAME characters or fewer."
+            else -> validate(email, password, confirm)
+        }
         if (problem != null) return showError(problem)
         submit {
-            account.signUp(email, password)
+            account.signUp(email, password, fullName, requestClinician)
             if (account.userId == null) _info.value = "Account created. Check your email to confirm it, then log in."
         }
     }
@@ -112,5 +170,6 @@ class AuthViewModel(app: Application) : AndroidViewModel(app) {
 
     private companion object {
         const val MIN_PASSWORD = 8
+        const val MAX_NAME = 80
     }
 }

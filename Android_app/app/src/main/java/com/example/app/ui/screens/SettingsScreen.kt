@@ -36,6 +36,7 @@ import com.example.app.ui.components.ReBandCard
 import com.example.app.ui.components.ReBandIcons
 import com.example.app.ui.components.ScreenTitle
 import com.example.app.ui.components.WearableStatusCard
+import com.example.app.ui.pairing.NavCard
 import com.example.app.ui.theme.Orange
 import com.example.app.ui.theme.Teal
 
@@ -45,6 +46,9 @@ fun SettingsScreen(
     busy: Boolean,
     error: String?,
     wearable: WearableUiState,
+    fullName: String?,
+    onEditName: () -> Unit,
+    onOpenMyClinician: () -> Unit,
     onConnectWearable: () -> Unit,
     onDisconnectWearable: () -> Unit,
     onLogout: () -> Unit,
@@ -74,6 +78,16 @@ fun SettingsScreen(
                 }
             }
         }
+
+        NavCard(ReBandIcons.Person, "Your name", fullName ?: "Add your name", onEditName)
+
+        Text("Care team", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        NavCard(
+            ReBandIcons.Clinician,
+            "My clinician",
+            "Share your progress with your clinician, or manage access",
+            onOpenMyClinician,
+        )
 
         Text("Bluetooth", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         WearableStatusCard(wearable) {
