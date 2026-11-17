@@ -9,4 +9,4 @@ FILE(GLOB_RECURSE app_sources ${CMAKE_SOURCE_DIR}/src/*.*)
 # list(APPEND app_sources ${CMAKE_SOURCE_DIR}/test/emg_test.c)
 
 idf_component_register(SRCS ${app_sources}
-                       PRIV_REQUIRES nvs_flash esp_timer emg ble esp_adc)
+                       PRIV_REQUIRES nvs_flash esp_timer emg ble esp_adc exercise reband_config)
