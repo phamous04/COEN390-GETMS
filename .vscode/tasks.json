@@ -1,0 +1,21 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Android recording validation",
+			"type": "shell",
+			"command": ".\\Android_app\\gradlew.bat",
+			"args": [
+				"-p",
+				"Android_app",
+				":app:testDebugUnitTest",
+				":app:assembleDebug",
+				":app:assembleDebugAndroidTest",
+				":app:lintDebug"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		}
+	]
+}

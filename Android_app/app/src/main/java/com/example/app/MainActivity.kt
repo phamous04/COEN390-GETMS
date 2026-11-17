@@ -13,6 +13,16 @@ import com.example.app.navigation.AppNavHost
 import com.example.app.ui.theme.AppTheme
 
 class MainActivity : ComponentActivity() {
+    override fun onStart() {
+        super.onStart()
+        (application as RecordingApplication).recordings.manager.foregroundChanged(true)
+    }
+
+    override fun onStop() {
+        (application as RecordingApplication).recordings.manager.foregroundChanged(false)
+        super.onStop()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
