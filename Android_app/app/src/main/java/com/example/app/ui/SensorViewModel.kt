@@ -3,6 +3,7 @@ package com.example.app.ui
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.app.RecordingApplication
 import com.example.app.ble.BleDevice
 import com.example.app.ble.BleManager
 import com.example.app.ble.ConnectionState
@@ -39,6 +40,8 @@ class SensorViewModel(application: Application) : AndroidViewModel(application) 
 
     // Shared with the Home and Settings screens so there is only ever one connection.
     private val bleManager = BleManager.get(application)
+    private val recordingManager = (application as RecordingApplication).recordings.manager
+    val recordingState = recordingManager.state
 
     private val _selectedDeviceAddress = MutableStateFlow<String?>(null)
     private val _selectedDeviceName = MutableStateFlow<String?>(null)
@@ -97,6 +100,9 @@ class SensorViewModel(application: Application) : AndroidViewModel(application) 
     )
 
     init {
+        viewModelScope.launch {
+            recordingState.collect { _isStreaming.value = it.isRecording }
+        }
         // A device can drop the link on its own; streaming cannot continue without a connection
         viewModelScope.launch {
             bleManager.connectionState.collect { state ->
@@ -155,6 +161,7 @@ class SensorViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun disconnect() {
+        recordingManager.stop("Wearable disconnected; recording saved on this device")
         bleManager.disconnect()
         _isStreaming.value = false
         _selectedDeviceAddress.value = null
@@ -163,17 +170,17 @@ class SensorViewModel(application: Application) : AndroidViewModel(application) 
         _emgHistoryA.value = emptyList()
     }
 
-    fun startStreaming() {
-        if (bleManager.startStreaming()) _isStreaming.value = true
+    fun startStreaming(exercise: String, arm: String) {
+        recordingManager.start(exercise.trim(), arm)
     }
 
     fun stopStreaming() {
-        if (bleManager.stopStreaming()) _isStreaming.value = false
+        recordingManager.stop()
     }
 
     override fun onCleared() {
         super.onCleared()
         // Keep the shared connection open for the rest of the app; only stop the data stream.
-        if (_isStreaming.value) bleManager.stopStreaming()
+        recordingManager.stop("Recording screen closed; recording saved on this device")
     }
 }

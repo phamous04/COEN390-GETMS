@@ -32,6 +32,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -39,12 +40,14 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -69,7 +72,13 @@ fun BleSensorScreen(
     viewModel: SensorViewModel = viewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val recording by viewModel.recordingState.collectAsState()
+    var exercise by rememberSaveable { mutableStateOf("Shoulder flexion") }
+    var arm by rememberSaveable { mutableStateOf("Right") }
     val context = LocalContext.current
+    DisposableEffect(viewModel) {
+        onDispose { viewModel.stopStreaming() }
+    }
 
     // Required Bluetooth permissions according to Android version
     val requiredPermissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -135,6 +144,8 @@ fun BleSensorScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            recording.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            recording.info?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
             // Permission Banner
             if (!hasPermissions) {
                 PermissionRequestCard(
@@ -163,13 +174,29 @@ fun BleSensorScreen(
                     modifier = Modifier.fillMaxSize()
                 ) {
                     item {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedTextField(value = exercise, onValueChange = { exercise = it.take(120) },
+                                label = { Text("Exercise") }, singleLine = true,
+                                enabled = !recording.isRecording && !recording.busy,
+                                modifier = Modifier.fillMaxWidth())
+                            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                listOf("Left", "Right").forEach { choice ->
+                                    OutlinedButton(onClick = { arm = choice },
+                                        enabled = !recording.isRecording && !recording.busy) {
+                                        Text(if (arm == choice) "$choice arm (selected)" else "$choice arm")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    item {
                         DeviceControlCard(
                             deviceName = uiState.selectedDeviceName ?: "GETMS Device",
                             deviceAddress = uiState.selectedDeviceAddress ?: "",
                             isStreaming = uiState.isStreaming,
-                            isDeviceReady = uiState.isDeviceReady,
+                            isDeviceReady = uiState.isDeviceReady && !recording.busy && exercise.isNotBlank(),
                             fwVersion = uiState.deviceStatus?.fwVersion,
-                            onStartStream = { viewModel.startStreaming() },
+                            onStartStream = { viewModel.startStreaming(exercise, arm) },
                             onStopStream = { viewModel.stopStreaming() },
                             onDisconnect = { viewModel.disconnect() }
                         )
@@ -461,7 +488,7 @@ fun DeviceControlCard(
                     modifier = Modifier.weight(1f),
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32))
                 ) {
-                    Text(if (isDeviceReady) "Start Stream" else "Preparing…")
+                    Text(if (isDeviceReady) "Start Recording" else "Preparing…")
                 }
 
                 Button(
@@ -470,7 +497,7 @@ fun DeviceControlCard(
                     modifier = Modifier.weight(1f),
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFC62828))
                 ) {
-                    Text("Stop Stream")
+                    Text("Save Recording")
                 }
             }
         }

@@ -34,8 +34,15 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.util.UUID
 
+interface SensorPacketListener {
+    fun onEmg(packet: EmgPacket)
+    fun onImu(packet: ImuPacket)
+}
+
 @SuppressLint("MissingPermission")
 class BleManager(private val context: Context) {
+    /** Durable capture is separate from the lossy, bounded live-chart flows. Never block this callback. */
+    @Volatile var recordingListener: SensorPacketListener? = null
 
     companion object {
         private const val TAG = "BleManager"
@@ -595,11 +602,13 @@ class BleManager(private val context: Context) {
         when (uuid) {
             GattConstants.EMG_CHAR_UUID -> {
                 val packet = PacketParser.parseEmgPacket(data) ?: return
+                recordingListener?.onEmg(packet)
                 updateEmgMetrics(packet.sequence)
                 _emgPackets.tryEmit(packet)
             }
             GattConstants.IMU_CHAR_UUID -> {
                 val packet = PacketParser.parseImuPacket(data) ?: return
+                recordingListener?.onImu(packet)
                 updateImuMetrics(packet.sequence)
                 _imuPackets.tryEmit(packet)
             }
