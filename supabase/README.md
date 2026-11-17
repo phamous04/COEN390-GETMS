@@ -87,6 +87,36 @@ Set it back to `now()` to turn them on again.
 until it expires. When recording download is built, create signed URLs only at the moment of viewing, with
 `expiresIn` of 60 seconds or less, and never store them.
 
+## 7. Exercise sessions (Bicep Curl history)
+
+Run [migrations/20261118000000_exercise_sessions.sql](./migrations/20261118000000_exercise_sessions.sql) after the
+two pairing migrations. It only adds things and is safe to re-run. It adds:
+
+- `exercise_sessions`: one row per session (exercising arm, healthy reference arm, start/end, duration, rep and
+  clean-rep counts, status `completed` / `incomplete` / `interrupted`, both arms' calibration values, recording quality).
+- `exercise_reps`: one row per firmware Rep Event, `set_type` = `reference` (the healthy-arm curl) or `exercise`.
+  Units follow `firmware/Reband/BLE_PROTOCOL.md`: `*_x10` are tenths (degrees, % MVC), `*_mv` millivolts.
+- RLS: SELECT only, for the patient (`patient_id = auth.uid()`) or an actively assigned verified clinician
+  (`private.clinician_can_view_patient`). Clients cannot insert, update or delete directly.
+- `save_exercise_session(p_session, p_reps)`: the only write path. The patient id comes from the JWT, and an id that
+  already exists is ignored, so uploads can be retried without duplicates or overwrites.
+- `get_exercise_sessions(p_patient_id)`: the patient's own sessions, or the clinician's read-only view
+  (`no_access` otherwise). `get_assigned_patients_activity()`: last completed session per active patient.
+
+Removing a clinician (by either side) ends their access on the next read; the patient's sessions are not changed.
+
+**Checking the rules** (SQL editor, replace the UUIDs). Each `set` simulates a signed-in user:
+
+```sql
+begin;
+set local role authenticated;
+-- as an unassigned (or removed) clinician: expect {"result": "no_access"} and 0 rows
+set local request.jwt.claims = '{"sub": "<clinician-uuid>"}';
+select public.get_exercise_sessions('<patient-uuid>');
+select count(*) from public.exercise_sessions where patient_id = '<patient-uuid>';
+rollback;
+```
+
 ## Secrets rules
 
 - Never commit the `service_role` / secret key or the database password. The app only uses the anon/publishable key; RLS is the protection.

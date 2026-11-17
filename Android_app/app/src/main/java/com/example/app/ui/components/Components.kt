@@ -164,9 +164,13 @@ fun WearableStatusCard(
 /** Firmware-reported state, shown separately from the BLE link (getms_ble_spec.h Status). */
 @Composable
 private fun DeviceStatusLine(status: DeviceStatus) {
-    val state = when (status.state.toInt()) {
-        0x00 -> "Idle"
-        0x01 -> "Streaming"
+    val state = when (status.deviceState) {
+        com.example.app.ble.DeviceState.IDLE -> "Idle"
+        com.example.app.ble.DeviceState.CALIBRATING -> "Calibrating"
+        com.example.app.ble.DeviceState.READY -> "Ready"
+        com.example.app.ble.DeviceState.RECORDING -> "Recording"
+        com.example.app.ble.DeviceState.STOPPED -> "Stopped"
+        com.example.app.ble.DeviceState.ERROR -> "Error"
         else -> "Unknown"
     }
     val fw = "${status.fwVersion shr 8}.${status.fwVersion and 0xFF}"
@@ -176,6 +180,16 @@ private fun DeviceStatusLine(status: DeviceStatus) {
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        if (status.deviceState == com.example.app.ble.DeviceState.ERROR && status.errorCode != 0) {
+            Text(
+                com.example.app.ble.DeviceErrors.message(status.errorCode),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
+        if (status.flags and (com.example.app.ble.DeviceErrorFlags.IMU1_MISSING or com.example.app.ble.DeviceErrorFlags.IMU2_MISSING) != 0) {
+            Text("A motion sensor is not responding. Check the sensor cables.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+        }
         if (status.errorFlags.toInt() and 0x01 != 0) {
             Text(
                 "Sensor calibration data missing on the device: EMG readings are approximate.",
