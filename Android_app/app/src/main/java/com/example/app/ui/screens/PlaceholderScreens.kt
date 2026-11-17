@@ -1,6 +1,11 @@
 package com.example.app.ui.screens
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -9,7 +14,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import com.example.app.ui.components.ComingSoon
+import com.example.app.ui.components.IconBadge
+import com.example.app.ui.components.PrimaryButton
+import com.example.app.ui.components.ReBandCard
+import com.example.app.ui.pairing.OutlineAction
 import com.example.app.ui.components.ReBandIcons
 import com.example.app.ui.components.ScreenTitle
 import com.example.app.ui.theme.Teal
@@ -21,18 +29,33 @@ fun LoadingScreen() {
     }
 }
 
+/** Exercise selection. Bicep Curl is the only exercise the firmware supports. */
 @Composable
-fun ExercisesScreen() {
-    Column(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 16.dp)) {
+fun ExercisesScreen(canStart: Boolean, onStartBicepCurl: () -> Unit, onConnectWearable: () -> Unit) {
+    Column(
+        Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
         ScreenTitle("Exercises")
-        ComingSoon("Exercise library", ReBandIcons.Exercises, "Your prescribed exercises will be listed here.")
-    }
-}
-
-@Composable
-fun HistoryScreen() {
-    Column(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 16.dp)) {
-        ScreenTitle("History")
-        ComingSoon("Session history", ReBandIcons.History, "Your past exercise sessions will appear here.")
+        ReBandCard {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconBadge(ReBandIcons.Exercises)
+                    Column(Modifier.padding(start = 14.dp)) {
+                        Text("Bicep Curl", style = MaterialTheme.typography.titleLarge)
+                        Text(
+                            "Healthy-arm reference, calibration, then your exercise set. Reps are counted by the wearable.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                PrimaryButton("Start Bicep Curl", onClick = onStartBicepCurl, enabled = canStart)
+                if (!canStart) {
+                    Text("Connect your ReBand wearable first.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    OutlineAction("Connect Wearable", Teal, onConnectWearable, Modifier.fillMaxWidth())
+                }
+            }
+        }
     }
 }
