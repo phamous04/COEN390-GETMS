@@ -4,7 +4,7 @@ import android.app.Application
 import android.util.Patterns
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.app.data.local.AppDatabase
+import com.example.app.RecordingApplication
 import com.example.app.data.remote.AccountRepository
 import com.example.app.data.remote.SupabaseProvider
 import io.github.jan.supabase.exceptions.HttpRequestException
@@ -116,8 +116,8 @@ class AuthViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun signOut() = submit {
+        (getApplication<Application>() as RecordingApplication).recordings.manager.stop("Signed out; recording saved on this device")
         account.signOut()
-        AppDatabase.get(getApplication()).recordingDao().clearAll()
     }
 
     fun clearMessages() {
