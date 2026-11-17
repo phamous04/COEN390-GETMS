@@ -1,6 +1,29 @@
 package com.example.app.ui.screens
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.unit.IntOffset
+import com.example.app.ui.theme.TealDark
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -30,6 +53,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -38,23 +62,29 @@ import com.example.app.ui.components.PrimaryButton
 import com.example.app.ui.components.ReBandLogo
 import com.example.app.ui.theme.Orange
 import com.example.app.ui.theme.Teal
+import com.example.app.ui.theme.TealLight
 
 @Composable
 fun LoginScreen(viewModel: AuthViewModel, onCreateAccount: () -> Unit) {
     val busy by viewModel.busy.collectAsState()
+    val role by viewModel.role.collectAsState()
     var email by rememberSaveable { mutableStateOf("") }
     var password by rememberSaveable { mutableStateOf("") }
 
     AuthLayout(
-        title = "Welcome back",
-        subtitle = "Log in to continue your recovery exercises.",
+        role = role,
+        title = { if (it == LoginRole.Clinician) "Clinician login" else "Welcome back" },
+        subtitle = {
+            if (it == LoginRole.Clinician) "Log in to follow your patients' rehabilitation progress."
+            else "Log in to continue your recovery exercises."
+        },
         viewModel = viewModel,
     ) {
         EmailField(email) { email = it }
         PasswordField(password, label = "Password", imeAction = ImeAction.Done) { password = it }
         Spacer(Modifier.height(4.dp))
         PrimaryButton(
-            "Log in",
+            if (role == LoginRole.Clinician) "Log in as clinician" else "Log in",
             onClick = { viewModel.signIn(email, password) },
             enabled = viewModel.configured,
             loading = busy,
@@ -69,15 +99,41 @@ fun LoginScreen(viewModel: AuthViewModel, onCreateAccount: () -> Unit) {
 @Composable
 fun SignUpScreen(viewModel: AuthViewModel, onBackToLogin: () -> Unit) {
     val busy by viewModel.busy.collectAsState()
+    val role by viewModel.role.collectAsState()
+    val clinician = role == LoginRole.Clinician
     var email by rememberSaveable { mutableStateOf("") }
     var password by rememberSaveable { mutableStateOf("") }
     var confirm by rememberSaveable { mutableStateOf("") }
+    var fullName by rememberSaveable { mutableStateOf("") }
 
     AuthLayout(
-        title = "Create your account",
-        subtitle = "Sign up to start your guided rehabilitation.",
+        role = role,
+        title = { if (it == LoginRole.Clinician) "Create a clinician account" else "Create your account" },
+        subtitle = {
+            if (it == LoginRole.Clinician) "Invite your patients and follow their progress once they agree to share it."
+            else "Sign up to start your guided rehabilitation."
+        },
         viewModel = viewModel,
     ) {
+        AnimatedVisibility(visible = clinician, enter = fadeIn() + expandVertically(), exit = fadeOut() + shrinkVertically()) {
+            Banner(
+                "You'll get an invitation code to share with patients. You only see a patient's progress after they enter your code and agree to share it.",
+                isError = false,
+            )
+        }
+        OutlinedTextField(
+            value = fullName,
+            onValueChange = { fullName = it },
+            label = { Text("Full name") },
+            singleLine = true,
+            supportingText = {
+                Text(if (clinician) "Shown to patients who connect to you." else "Shown to a clinician only if you choose to connect.")
+            },
+            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words, imeAction = ImeAction.Next),
+            shape = RoundedCornerShape(14.dp),
+            colors = fieldColors(),
+            modifier = Modifier.fillMaxWidth(),
+        )
         EmailField(email) { email = it }
         PasswordField(password, label = "Password", imeAction = ImeAction.Next, hint = "At least 8 characters") {
             password = it
@@ -85,8 +141,8 @@ fun SignUpScreen(viewModel: AuthViewModel, onBackToLogin: () -> Unit) {
         PasswordField(confirm, label = "Confirm password", imeAction = ImeAction.Done) { confirm = it }
         Spacer(Modifier.height(4.dp))
         PrimaryButton(
-            "Create account",
-            onClick = { viewModel.signUp(email, password, confirm) },
+            if (clinician) "Create clinician account" else "Create account",
+            onClick = { viewModel.signUp(email, password, confirm, fullName, clinician) },
             enabled = viewModel.configured,
             loading = busy,
         )
@@ -97,10 +153,63 @@ fun SignUpScreen(viewModel: AuthViewModel, onBackToLogin: () -> Unit) {
     }
 }
 
+/** Sliding Patient / Clinician switch shared by login and sign-up. */
+@Composable
+private fun RoleToggle(selected: LoginRole, onSelect: (LoginRole) -> Unit) {
+    val options = LoginRole.entries
+    BoxWithConstraints(
+        Modifier
+            .fillMaxWidth()
+            .height(64.dp)
+            .clip(RoundedCornerShape(20.dp))
+            .background(TealLight)
+            .padding(5.dp)
+            .selectableGroup(),
+    ) {
+        val segment = maxWidth / options.size
+        val indicatorOffset by animateDpAsState(
+            targetValue = segment * options.indexOf(selected),
+            animationSpec = spring(dampingRatio = 0.75f, stiffness = Spring.StiffnessMediumLow),
+            label = "roleIndicator",
+        )
+        Box(
+            Modifier
+                .offset { IntOffset(indicatorOffset.roundToPx(), 0) }
+                .width(segment)
+                .fillMaxHeight()
+                .shadow(6.dp, RoundedCornerShape(16.dp))
+                .clip(RoundedCornerShape(16.dp))
+                .background(Brush.linearGradient(listOf(Teal, TealDark))),
+        )
+        Row(Modifier.fillMaxSize()) {
+            options.forEach { option ->
+                val isSelected = option == selected
+                val color by animateColorAsState(if (isSelected) Color.White else Teal, label = "roleLabel")
+                Row(
+                    Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .clip(RoundedCornerShape(16.dp))
+                        .selectable(selected = isSelected, onClick = { onSelect(option) }, role = Role.Tab),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        if (option == LoginRole.Clinician) "Clinician" else "Patient",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = color,
+                    )
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun AuthLayout(
-    title: String,
-    subtitle: String,
+    role: LoginRole,
+    title: (LoginRole) -> String,
+    subtitle: (LoginRole) -> String,
     viewModel: AuthViewModel,
     content: @Composable () -> Unit,
 ) {
@@ -117,10 +226,16 @@ private fun AuthLayout(
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         ReBandLogo(large = true)
-        Spacer(Modifier.height(20.dp))
-        Text(title, style = MaterialTheme.typography.headlineMedium)
-        Text(subtitle, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(12.dp))
+        RoleToggle(role, viewModel::selectRole)
+        Spacer(Modifier.height(4.dp))
+        Crossfade(targetState = role, label = "authHeader") { shown ->
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(title(shown), style = MaterialTheme.typography.headlineMedium)
+                Text(subtitle(shown), style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        Spacer(Modifier.height(4.dp))
         if (!viewModel.configured) {
             Banner("Supabase is not configured. Add SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY to local.properties, then rebuild.", isError = true)
         }
