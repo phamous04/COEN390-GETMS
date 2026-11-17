@@ -1,6 +1,15 @@
 package com.example.app.ui.history
 
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.unit.dp
+import com.example.app.data.local.RecordingEntity
+import com.example.app.data.local.UploadStatus
+import com.example.app.ui.components.ReBandCard
+import java.text.DateFormat
+import java.util.Date
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -44,6 +53,7 @@ fun SessionHistoryList(
 @Composable
 fun PatientHistoryScreen(
     history: List<SessionWithReps>?,
+    recordings: List<RecordingEntity>,
     onOpenSession: (String) -> Unit,
     onStartExercise: () -> Unit,
 ) {
@@ -55,6 +65,39 @@ fun PatientHistoryScreen(
             emptyMessage = "Your saved Bicep Curl sessions will appear here.",
             emptyAction = { OutlineAction("Start Exercise", Teal, onStartExercise) },
         )
+        if (recordings.isNotEmpty()) {
+            Text("Sensor recordings", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                "Raw EMG data saved on this phone, including recordings waiting for upload.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            recordings.forEach { SensorRecordingCard(it) }
+        }
+    }
+}
+
+/** One offline sensor recording (RecordingRepository) with its recording and upload state. */
+@Composable
+fun SensorRecordingCard(recording: RecordingEntity) {
+    ReBandCard {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("${recording.exercise} • ${recording.arm} arm", style = MaterialTheme.typography.titleMedium)
+            Text(DateFormat.getDateTimeInstance().format(Date(recording.startedAtMillis)), style = MaterialTheme.typography.bodyMedium)
+            val uploadLabel = when (recording.uploadStatus) {
+                UploadStatus.PENDING -> "Waiting to upload"
+                UploadStatus.UPLOADING -> "Uploading"
+                UploadStatus.UPLOADED -> "Uploaded"
+                UploadStatus.FAILED -> "Upload failed"
+            }
+            val status = recording.recordingStatus.name.lowercase().replaceFirstChar { it.uppercase() }
+            Text("${recording.elapsedDurationMillis / 1000}s • $status • $uploadLabel", style = MaterialTheme.typography.bodyMedium)
+            if (recording.retryCount > 0) Text("Upload attempts: ${recording.retryCount}", style = MaterialTheme.typography.bodySmall)
+            recording.recordingError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+            recording.lastUploadError?.takeIf { it != recording.recordingError }?.let {
+                Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+            }
+        }
     }
 }
 

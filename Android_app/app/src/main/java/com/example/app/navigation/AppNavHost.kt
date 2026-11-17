@@ -252,6 +252,7 @@ private fun MainNavHost(email: String?, authViewModel: AuthViewModel, account: A
     }
     val historyList by history.history.collectAsState()
     val weekly by history.weekly.collectAsState()
+    val sensorRecordings by history.recordings.collectAsState()
     val startExercise = { if (wearable.canStartExercise && patientId != null) nav.navigate(Routes.EXERCISE_FLOW) { launchSingleTop = true } }
     val openTab = { route: String ->
         nav.navigate(route) {
@@ -314,6 +315,7 @@ private fun MainNavHost(email: String?, authViewModel: AuthViewModel, account: A
             composable(Routes.HISTORY) {
                 PatientHistoryScreen(
                     historyList,
+                    recordings = sensorRecordings,
                     onOpenSession = { nav.navigate(Routes.session(it)) },
                     onStartExercise = { openTab(Routes.EXERCISES) },
                 )
