@@ -23,7 +23,12 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.example.app.data.WeeklyActivity
 import com.example.app.ui.components.PrimaryButton
+import com.example.app.ui.history.SessionListItem
+import com.example.app.ui.history.WeeklyActivityChart
+import com.example.app.ui.pairing.LoadingBlock
+import com.example.app.ui.pairing.OutlineAction
 import com.example.app.ui.components.ReBandLogo
 import com.example.app.ui.components.WearableStatusCard
 import com.example.app.ui.theme.Teal
@@ -33,8 +38,11 @@ import com.example.app.ui.theme.TealDark
 fun HomeScreen(
     email: String?,
     wearable: WearableUiState,
+    weekly: WeeklyActivity?,
     onConnectWearable: () -> Unit,
     onStartExercise: () -> Unit,
+    onOpenHistory: () -> Unit,
+    onOpenSession: (String) -> Unit,
 ) {
     Column(
         Modifier
@@ -69,6 +77,25 @@ fun HomeScreen(
                     border = BorderStroke(1.5.dp, Teal),
                 ) { Text("Connect Wearable", color = Teal, style = MaterialTheme.typography.titleMedium) }
             }
+        }
+
+        // Weekly activity from saved sessions (Room); refreshes as soon as a session is saved.
+        if (weekly == null) {
+            LoadingBlock("Loading your week…")
+        } else {
+            WeeklyActivityChart(weekly)
+            val recent = weekly.mostRecentCompleted
+            if (recent != null) {
+                Text("Most recent completed exercise", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                SessionListItem(recent) { onOpenSession(recent.session.id) }
+            } else {
+                Text(
+                    "No completed sessions yet. Your first Bicep Curl session will show up here.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            OutlineAction("View history", Teal, onOpenHistory, Modifier.fillMaxWidth())
         }
 
         Spacer(Modifier.height(12.dp))
