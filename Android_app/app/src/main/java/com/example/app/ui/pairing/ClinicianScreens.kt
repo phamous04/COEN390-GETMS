@@ -42,6 +42,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.app.data.remote.AccountInfo
 import com.example.app.data.remote.AssignedPatient
+import com.example.app.data.remote.PatientActivity
+import com.example.app.ui.history.formatSessionDate
 import com.example.app.data.remote.ReconnectionRequest
 import com.example.app.ui.components.IconBadge
 import com.example.app.ui.components.PrimaryButton
@@ -62,6 +64,7 @@ fun ClinicianDashboardScreen(
     onOpenRequests: () -> Unit,
     onOpenPatient: (String) -> Unit,
     onEditName: () -> Unit,
+    activity: Map<String, PatientActivity> = emptyMap(),
 ) {
     val state by viewModel.state.collectAsState()
     var removing by remember { mutableStateOf<AssignedPatient?>(null) }
@@ -117,7 +120,7 @@ fun ClinicianDashboardScreen(
                 "Share your clinician code with patients. They appear here once they confirm they want to share their progress with you.",
             ) { OutlineAction("Show my code", Teal, onOpenCode) }
             else -> state.patients.forEach { patient ->
-                PatientCard(patient, busy = patient.patientId in state.busyIds, onView = { onOpenPatient(patient.patientId) }, onRemove = { removing = patient })
+                PatientCard(patient, activity[patient.patientId], busy = patient.patientId in state.busyIds, onView = { onOpenPatient(patient.patientId) }, onRemove = { removing = patient })
             }
         }
     }
@@ -150,7 +153,7 @@ fun NavCard(icon: androidx.compose.ui.graphics.vector.ImageVector, title: String
 }
 
 @Composable
-private fun PatientCard(patient: AssignedPatient, busy: Boolean, onView: () -> Unit, onRemove: () -> Unit) {
+private fun PatientCard(patient: AssignedPatient, activity: PatientActivity?, busy: Boolean, onView: () -> Unit, onRemove: () -> Unit) {
     ReBandCard {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -163,10 +166,14 @@ private fun PatientCard(patient: AssignedPatient, busy: Boolean, onView: () -> U
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    Text(
+                        "Last completed exercise: " + (activity?.lastCompletedAtMillis?.let { formatSessionDate(it) } ?: "none yet"),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
                 }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlineAction("View progress", Teal, onView, Modifier.weight(1f), enabled = !busy)
+                OutlineAction("View history", Teal, onView, Modifier.weight(1f), enabled = !busy)
                 OutlineAction("Remove", MaterialTheme.colorScheme.error, onRemove, Modifier.weight(1f), loading = busy)
             }
         }
@@ -293,7 +300,12 @@ fun ClinicianCodeScreen(viewModel: ClinicianViewModel, onBack: (() -> Unit)?) {
 
 // Screen C — Connected patients
 @Composable
-fun ConnectedPatientsScreen(viewModel: ClinicianViewModel, onOpenPatient: (String) -> Unit, onOpenCode: () -> Unit) {
+fun ConnectedPatientsScreen(
+    viewModel: ClinicianViewModel,
+    onOpenPatient: (String) -> Unit,
+    onOpenCode: () -> Unit,
+    activity: Map<String, PatientActivity> = emptyMap(),
+) {
     val state by viewModel.state.collectAsState()
     var removing by remember { mutableStateOf<AssignedPatient?>(null) }
 
@@ -316,7 +328,7 @@ fun ConnectedPatientsScreen(viewModel: ClinicianViewModel, onOpenPatient: (Strin
                 "Patients appear here after they enter your code and confirm that they want to share their progress.",
             ) { OutlineAction("Show my code", Teal, onOpenCode) }
             else -> state.patients.forEach { patient ->
-                PatientCard(patient, busy = patient.patientId in state.busyIds, onView = { onOpenPatient(patient.patientId) }, onRemove = { removing = patient })
+                PatientCard(patient, activity[patient.patientId], busy = patient.patientId in state.busyIds, onView = { onOpenPatient(patient.patientId) }, onRemove = { removing = patient })
             }
         }
     }
@@ -390,7 +402,13 @@ fun ReconnectionRequestsScreen(viewModel: ClinicianViewModel, onBack: () -> Unit
 
 // Authorized progress for one patient. Access is re-checked with the server every time.
 @Composable
-fun PatientProgressScreen(patientId: String, viewModel: ClinicianViewModel, onBack: () -> Unit) {
+fun PatientProgressScreen(
+    patientId: String,
+    viewModel: ClinicianViewModel,
+    onBack: () -> Unit,
+    history: @Composable () -> Unit = {},
+    onRemoved: (String) -> Unit = {},
+) {
     val state by viewModel.state.collectAsState()
     var removing by remember { mutableStateOf<AssignedPatient?>(null) }
     LaunchedEffect(patientId) { viewModel.loadOverview(patientId) }
@@ -416,14 +434,8 @@ fun PatientProgressScreen(patientId: String, viewModel: ClinicianViewModel, onBa
                         }
                     }
                 }
-                Text("Exercise history", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                // Truthful unavailable state: sessions are only stored on the patient's phone today.
-                EmptyState(
-                    ReBandIcons.History,
-                    "No shared sessions yet",
-                    "Exercise sessions are currently stored only on the patient's device. They will appear here once session upload " +
-                        "to ReBand is available. You will have read-only access while this patient stays connected.",
-                )
+                Text("Exercise history (read-only)", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                history()
                 OutlineAction(
                     "Remove patient",
                     MaterialTheme.colorScheme.error,
@@ -439,6 +451,7 @@ fun PatientProgressScreen(patientId: String, viewModel: ClinicianViewModel, onBa
         RemovePatientDialog(patient, onConfirm = {
             removing = null
             viewModel.removePatient(patient)
+            onRemoved(patient.patientId)
             onBack()
         }, onDismiss = { removing = null })
     }

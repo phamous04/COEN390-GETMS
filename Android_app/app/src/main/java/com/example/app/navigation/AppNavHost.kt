@@ -35,6 +35,9 @@ import com.example.app.ui.pairing.AccountViewModel
 import com.example.app.ui.pairing.ClinicianAccountScreen
 import com.example.app.ui.pairing.ClinicianCodeScreen
 import com.example.app.ui.pairing.ClinicianDashboardScreen
+import com.example.app.ui.pairing.ClinicianHistoryViewModel
+import com.example.app.ui.pairing.ClinicianPatientHistory
+import com.example.app.ui.pairing.ClinicianSessionDetail
 import com.example.app.ui.pairing.ClinicianViewModel
 import com.example.app.ui.pairing.ConfirmClinicianScreen
 import com.example.app.ui.pairing.ConnectedPatientsScreen
@@ -50,7 +53,12 @@ import com.example.app.ui.screens.AuthViewModel
 import com.example.app.ui.BleSensorScreen
 import com.example.app.ui.screens.DeviceScanScreen
 import com.example.app.ui.screens.ExercisesScreen
-import com.example.app.ui.screens.HistoryScreen
+import com.example.app.ui.screens.HistoryViewModel
+import com.example.app.ui.exercise.ExerciseFlowScreen
+import com.example.app.ui.exercise.ExerciseViewModel
+import com.example.app.ui.history.PatientHistoryScreen
+import com.example.app.ui.history.SessionDetailScreen
+import com.example.app.data.remote.SupabaseProvider
 import com.example.app.ui.screens.HomeScreen
 import com.example.app.ui.screens.LoadingScreen
 import com.example.app.ui.screens.LoginRole
@@ -69,8 +77,12 @@ object Routes {
     const val HISTORY = "history"
     const val SETTINGS = "settings"
     const val DEVICES = "devices"
-    // Teammates' live sensor/recording screen, opened by Start Exercise.
+    // Teammates' developer sensor screen (no longer linked from Home).
     const val SENSOR = "sensor"
+    // Bicep Curl workflow: reference, calibration, recording, summary.
+    const val EXERCISE_FLOW = "exercise/bicep-curl"
+    const val SESSION = "history/session/{sessionId}"
+    fun session(sessionId: String) = "history/session/$sessionId"
 
     // Patient: clinician pairing
     const val MY_CLINICIAN = "patient/clinician"
@@ -85,6 +97,8 @@ object Routes {
     const val CLINICIAN_REQUESTS = "clinician/requests"
     const val CLINICIAN_PATIENT = "clinician/patient/{patientId}"
     fun clinicianPatient(patientId: String) = "clinician/patient/$patientId"
+    const val CLINICIAN_SESSION = "clinician/patient/{patientId}/session/{sessionId}"
+    fun clinicianSession(patientId: String, sessionId: String) = "clinician/patient/$patientId/session/$sessionId"
 }
 
 private data class Tab(val route: String, val label: String, val icon: ImageVector)
@@ -220,7 +234,32 @@ private fun MainNavHost(email: String?, authViewModel: AuthViewModel, account: A
     // Activity-scoped, so Home, Settings and the scanner all read the same wearable state.
     val wearableViewModel: WearableViewModel = viewModel()
     val wearable by wearableViewModel.uiState.collectAsState()
-    val fullScreen = currentRoute in setOf(Routes.DEVICES, Routes.SENSOR, Routes.ENTER_CLINICIAN_CODE, Routes.CONFIRM_CLINICIAN)
+    val fullScreen = currentRoute in setOf(
+        Routes.DEVICES, Routes.SENSOR, Routes.EXERCISE_FLOW, Routes.ENTER_CLINICIAN_CODE, Routes.CONFIRM_CLINICIAN,
+    )
+    // Sessions are stored per patient; the id comes from the backend account (or the auth session
+    // when the account type could not be loaded).
+    val authUserId = remember(email) { SupabaseProvider.auth.currentUserOrNull()?.id }
+    val patientId = account?.userId ?: authUserId
+    // Activity-scoped so the flow survives a trip to the device scanner (e.g. to reconnect mid-set).
+    val exercise: ExerciseViewModel = viewModel(key = "exercise-$patientId")
+    val history: HistoryViewModel = viewModel(key = "history-$patientId")
+    LaunchedEffect(patientId) {
+        if (patientId != null) {
+            exercise.bind(patientId)
+            history.bind(patientId)
+        }
+    }
+    val historyList by history.history.collectAsState()
+    val weekly by history.weekly.collectAsState()
+    val startExercise = { if (wearable.canStartExercise && patientId != null) nav.navigate(Routes.EXERCISE_FLOW) { launchSingleTop = true } }
+    val openTab = { route: String ->
+        nav.navigate(route) {
+            popUpTo(nav.graph.findStartDestination().id) { saveState = true }
+            launchSingleTop = true
+            restoreState = true
+        }
+    }
     // Created here, outside the NavHost, so the My Clinician, Enter Code and Confirm screens share
     // one instance. Inside a composable() route, viewModel() would be scoped to that screen alone.
     val pairing: PatientClinicianViewModel = viewModel(key = "patient-clinician-$email")
@@ -258,12 +297,44 @@ private fun MainNavHost(email: String?, authViewModel: AuthViewModel, account: A
                 HomeScreen(
                     email,
                     wearable = wearable,
+                    weekly = weekly,
                     onConnectWearable = { nav.navigate(Routes.DEVICES) },
-                    onStartExercise = { if (wearable.canStartExercise) nav.navigate(Routes.SENSOR) },
+                    onStartExercise = startExercise,
+                    onOpenHistory = { openTab(Routes.HISTORY) },
+                    onOpenSession = { nav.navigate(Routes.session(it)) },
                 )
             }
-            composable(Routes.EXERCISES) { ExercisesScreen() }
-            composable(Routes.HISTORY) { HistoryScreen() }
+            composable(Routes.EXERCISES) {
+                ExercisesScreen(
+                    canStart = wearable.canStartExercise && patientId != null,
+                    onStartBicepCurl = startExercise,
+                    onConnectWearable = { nav.navigate(Routes.DEVICES) },
+                )
+            }
+            composable(Routes.HISTORY) {
+                PatientHistoryScreen(
+                    historyList,
+                    onOpenSession = { nav.navigate(Routes.session(it)) },
+                    onStartExercise = { openTab(Routes.EXERCISES) },
+                )
+            }
+            composable(
+                Routes.SESSION,
+                arguments = listOf(navArgument("sessionId") { type = NavType.StringType }),
+            ) { entry ->
+                val sessionId = entry.arguments?.getString("sessionId").orEmpty()
+                val flow = remember(sessionId, patientId) { history.session(sessionId) }
+                SessionDetailScreen(flow, onBack = { nav.popBackStack() })
+            }
+            composable(Routes.EXERCISE_FLOW) {
+                ExerciseFlowScreen(
+                    viewModel = exercise,
+                    savedSession = history::session,
+                    onConnectWearable = { nav.navigate(Routes.DEVICES) },
+                    onOpenHistory = { openTab(Routes.HISTORY) },
+                    onExit = { nav.popBackStack() },
+                )
+            }
             composable(Routes.SETTINGS) {
                 SettingsScreen(
                     email,
@@ -320,6 +391,8 @@ private fun ClinicianNavHost(account: AccountInfo, authViewModel: AuthViewModel,
     val currentRoute = backStack?.destination?.route
     val busy by authViewModel.busy.collectAsState()
     val clinician: ClinicianViewModel = viewModel(key = "clinician-${account.userId}")
+    val clinicianHistory: ClinicianHistoryViewModel = viewModel(key = "clinician-history-${account.userId}")
+    val activity by clinicianHistory.activity.collectAsState()
     val openPatient = { patientId: String -> nav.navigate(Routes.clinicianPatient(patientId)) }
     val openTab = { route: String ->
         nav.navigate(route) {
@@ -332,7 +405,7 @@ private fun ClinicianNavHost(account: AccountInfo, authViewModel: AuthViewModel,
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         bottomBar = {
-            if (currentRoute != Routes.CLINICIAN_PATIENT) {
+            if (currentRoute != Routes.CLINICIAN_PATIENT && currentRoute != Routes.CLINICIAN_SESSION) {
                 NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
                     clinicianTabs.forEach { tab ->
                         NavigationBarItem(
@@ -353,7 +426,10 @@ private fun ClinicianNavHost(account: AccountInfo, authViewModel: AuthViewModel,
     ) { padding ->
         NavHost(navController = nav, startDestination = Routes.CLINICIAN_DASHBOARD, modifier = Modifier.padding(padding)) {
             composable(Routes.CLINICIAN_DASHBOARD) {
-                LaunchedEffect(Unit) { clinician.refresh() }
+                LaunchedEffect(Unit) {
+                    clinician.refresh()
+                    clinicianHistory.refreshActivity()
+                }
                 ClinicianDashboardScreen(
                     account,
                     clinician,
@@ -362,11 +438,15 @@ private fun ClinicianNavHost(account: AccountInfo, authViewModel: AuthViewModel,
                     onOpenRequests = { nav.navigate(Routes.CLINICIAN_REQUESTS) },
                     onOpenPatient = openPatient,
                     onEditName = onEditName,
+                    activity = activity,
                 )
             }
             composable(Routes.CLINICIAN_PATIENTS) {
-                LaunchedEffect(Unit) { clinician.refresh() }
-                ConnectedPatientsScreen(clinician, onOpenPatient = openPatient, onOpenCode = { openTab(Routes.CLINICIAN_CODE) })
+                LaunchedEffect(Unit) {
+                    clinician.refresh()
+                    clinicianHistory.refreshActivity()
+                }
+                ConnectedPatientsScreen(clinician, onOpenPatient = openPatient, onOpenCode = { openTab(Routes.CLINICIAN_CODE) }, activity = activity)
             }
             composable(Routes.CLINICIAN_CODE) {
                 LaunchedEffect(Unit) { clinician.refresh() }
@@ -383,11 +463,34 @@ private fun ClinicianNavHost(account: AccountInfo, authViewModel: AuthViewModel,
                 Routes.CLINICIAN_PATIENT,
                 arguments = listOf(navArgument("patientId") { type = NavType.StringType }),
             ) { entry ->
+                val patientId = entry.arguments?.getString("patientId").orEmpty()
+                LaunchedEffect(patientId) { clinicianHistory.loadPatient(patientId) }
                 PatientProgressScreen(
-                    patientId = entry.arguments?.getString("patientId").orEmpty(),
+                    patientId = patientId,
                     viewModel = clinician,
                     onBack = { nav.popBackStack() },
+                    history = {
+                        ClinicianPatientHistory(
+                            clinicianHistory,
+                            onOpenSession = { nav.navigate(Routes.clinicianSession(patientId, it)) },
+                            onRetry = { clinicianHistory.loadPatient(patientId) },
+                        )
+                    },
+                    onRemoved = clinicianHistory::forget,
                 )
+            }
+            composable(
+                Routes.CLINICIAN_SESSION,
+                arguments = listOf(
+                    navArgument("patientId") { type = NavType.StringType },
+                    navArgument("sessionId") { type = NavType.StringType },
+                ),
+            ) { entry ->
+                val patientId = entry.arguments?.getString("patientId").orEmpty()
+                val sessionId = entry.arguments?.getString("sessionId").orEmpty()
+                // Re-checked with the server on open, so revoked access shows nothing.
+                LaunchedEffect(patientId, sessionId) { clinicianHistory.loadPatient(patientId) }
+                ClinicianSessionDetail(clinicianHistory, patientId, sessionId, onBack = { nav.popBackStack() })
             }
         }
     }

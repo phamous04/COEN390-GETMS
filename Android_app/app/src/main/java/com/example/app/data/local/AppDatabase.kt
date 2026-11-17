@@ -1,13 +1,24 @@
 package com.example.app.data.local
 
 import android.content.Context
+import androidx.room.AutoMigration
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 
-@Database(entities = [RecordingEntity::class], version = 1, exportSchema = true)
+/**
+ * v2 adds the exercise session tables. The auto-migration only creates tables, so existing
+ * `recordings` rows are kept.
+ */
+@Database(
+    entities = [RecordingEntity::class, ExerciseSessionEntity::class, ExerciseRepEntity::class],
+    version = 2,
+    exportSchema = true,
+    autoMigrations = [AutoMigration(from = 1, to = 2)],
+)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun recordingDao(): RecordingDao
+    abstract fun exerciseSessionDao(): ExerciseSessionDao
 
     companion object {
         @Volatile

@@ -81,6 +81,24 @@ class BleManager(private val context: Context) {
     )
     val imuPackets: SharedFlow<ImuPacket> = _imuPackets.asSharedFlow()
 
+    /** Every Rep Event notification, in arrival order (live and GET_REPS replays). */
+    private val _repEvents = MutableSharedFlow<RepEvent>(
+        extraBufferCapacity = 128,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST
+    )
+    val repEvents: SharedFlow<RepEvent> = _repEvents.asSharedFlow()
+
+    /** Every Status notification or read, unconflated (deviceStatus keeps only the latest). */
+    private val _statusUpdates = MutableSharedFlow<DeviceStatus>(
+        extraBufferCapacity = 64,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST
+    )
+    val statusUpdates: SharedFlow<DeviceStatus> = _statusUpdates.asSharedFlow()
+
+    /** True when the connected device exposes the Rep Event characteristic (firmware v0.2+). */
+    private val _supportsExercise = MutableStateFlow(false)
+    val supportsExercise: StateFlow<Boolean> = _supportsExercise.asStateFlow()
+
     private val _streamMetrics = MutableStateFlow(StreamMetrics())
     val streamMetrics: StateFlow<StreamMetrics> = _streamMetrics.asStateFlow()
 
@@ -293,6 +311,7 @@ class BleManager(private val context: Context) {
         bluetoothGatt = null
         controlCharacteristic = null
         _servicesReady.value = false
+        _supportsExercise.value = false
         _connectedDeviceName.value = null
         _connectionState.value = ConnectionState.DISCONNECTED
     }
@@ -303,16 +322,38 @@ class BleManager(private val context: Context) {
         _lastError.value = message
     }
 
-    // --- Streaming Control Commands ---
+    // --- Control Commands (BLE_PROTOCOL.md, firmware v0.2) ---
+    // Each returns true if the write was queued; false if no validated connection exists.
 
-    /** Returns true if the command was queued; false if the device is not ready yet. */
-    fun startStreaming(): Boolean = writeControlCommand(GattConstants.CMD_START)
+    /** CALIBRATE step (1 relax, 2 curl, 3 MVC). */
+    fun calibrate(step: Int): Boolean =
+        writeControlCommand(byteArrayOf(GattConstants.CMD_CALIBRATE, step.toByte()))
 
-    fun stopStreaming(): Boolean = writeControlCommand(GattConstants.CMD_STOP)
+    /** START: begin counting reps. Needs a completed calibration on the device. */
+    fun startRecording(): Boolean = writeControlCommand(byteArrayOf(GattConstants.CMD_START))
 
-    private fun writeControlCommand(command: Byte): Boolean {
+    /** STOP: end a recording (-> STOPPED) or cancel a calibration (-> IDLE). */
+    fun stopRecording(): Boolean = writeControlCommand(byteArrayOf(GattConstants.CMD_STOP))
+
+    /** GET_STATE: the device answers with a Status notification. */
+    fun requestState(): Boolean = writeControlCommand(byteArrayOf(GattConstants.CMD_GET_STATE))
+
+    /** GET_REPS from [fromIndex]: replays the stored Rep Events (device keeps the last 32). */
+    fun requestReps(fromIndex: Int): Boolean = writeControlCommand(
+        byteArrayOf(
+            GattConstants.CMD_GET_REPS,
+            (fromIndex and 0xFF).toByte(),
+            ((fromIndex shr 8) and 0xFF).toByte(),
+        )
+    )
+
+    /** Used by the developer sensor screen. */
+    fun startStreaming(): Boolean = startRecording()
+
+    fun stopStreaming(): Boolean = stopRecording()
+
+    private fun writeControlCommand(payload: ByteArray): Boolean {
         val char = controlCharacteristic ?: return false
-        val payload = byteArrayOf(command)
 
         enqueueGattOp { gatt ->
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -409,6 +450,7 @@ class BleManager(private val context: Context) {
                 bluetoothGatt = null
                 controlCharacteristic = null
                 _servicesReady.value = false
+                _supportsExercise.value = false
                 _connectedDeviceName.value = null
                 _connectionState.value = ConnectionState.DISCONNECTED
             }
@@ -440,11 +482,13 @@ class BleManager(private val context: Context) {
 
             Log.i(TAG, "GETMS Service discovered!")
             controlCharacteristic = control
+            _supportsExercise.value = service.getCharacteristic(GattConstants.REP_CHAR_UUID) != null
 
-            // Enable Notifications on EMG, IMU, and Status characteristics
+            // Enable notifications on EMG, Status and Rep Event (IMU is reserved, skipped if absent)
             enableNotification(service, GattConstants.EMG_CHAR_UUID)
             enableNotification(service, GattConstants.IMU_CHAR_UUID)
             enableNotification(service, GattConstants.STATUS_CHAR_UUID)
+            enableNotification(service, GattConstants.REP_CHAR_UUID)
             // Queued after the notification setup, so ready means notifications are configured
             // and the device has answered with its status (the GET_STATE equivalent).
             enqueueGattOp { it.readCharacteristic(statusChar) }
@@ -519,6 +563,7 @@ class BleManager(private val context: Context) {
                 return
             }
             _deviceStatus.value = parsed
+            _statusUpdates.tryEmit(parsed)
             _servicesReady.value = true
         }
         onGattOpComplete()
@@ -561,6 +606,11 @@ class BleManager(private val context: Context) {
             GattConstants.STATUS_CHAR_UUID -> {
                 val status = PacketParser.parseStatusPacket(data) ?: return
                 _deviceStatus.value = status
+                _statusUpdates.tryEmit(status)
+            }
+            GattConstants.REP_CHAR_UUID -> {
+                val rep = PacketParser.parseRepEvent(data) ?: return
+                _repEvents.tryEmit(rep)
             }
         }
     }
