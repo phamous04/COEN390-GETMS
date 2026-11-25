@@ -18,7 +18,7 @@ class PacketParserTest {
 
         for (i in 0 until 20) {
             buffer.putShort((100 + i).toShort()) // chA
-            buffer.putShort((200 + i).toShort()) // chB
+            buffer.putShort((200 + i).toShort()) // chB, ignored by the parser
         }
 
         val packet = PacketParser.parseEmgPacket(buffer.array())
@@ -27,7 +27,7 @@ class PacketParserTest {
         assertEquals(500000L, packet.t0Us)
         assertEquals(20, packet.samples.size)
         assertEquals(100, packet.samples[0].channelA)
-        assertEquals(200, packet.samples[0].channelB)
+        assertEquals(119, packet.samples[19].channelA)
         assertEquals(500000L, packet.samples[0].timestampUs)
         assertEquals(501000L, packet.samples[1].timestampUs)
     }

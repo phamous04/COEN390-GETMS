@@ -32,6 +32,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -39,12 +40,14 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -69,7 +72,13 @@ fun BleSensorScreen(
     viewModel: SensorViewModel = viewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val recording by viewModel.recordingState.collectAsState()
+    var exercise by rememberSaveable { mutableStateOf("Shoulder flexion") }
+    var arm by rememberSaveable { mutableStateOf("Right") }
     val context = LocalContext.current
+    DisposableEffect(viewModel) {
+        onDispose { viewModel.stopStreaming() }
+    }
 
     // Required Bluetooth permissions according to Android version
     val requiredPermissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -135,6 +144,8 @@ fun BleSensorScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            recording.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            recording.info?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
             // Permission Banner
             if (!hasPermissions) {
                 PermissionRequestCard(
@@ -163,13 +174,29 @@ fun BleSensorScreen(
                     modifier = Modifier.fillMaxSize()
                 ) {
                     item {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedTextField(value = exercise, onValueChange = { exercise = it.take(120) },
+                                label = { Text("Exercise") }, singleLine = true,
+                                enabled = !recording.isRecording && !recording.busy,
+                                modifier = Modifier.fillMaxWidth())
+                            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                listOf("Left", "Right").forEach { choice ->
+                                    OutlinedButton(onClick = { arm = choice },
+                                        enabled = !recording.isRecording && !recording.busy) {
+                                        Text(if (arm == choice) "$choice arm (selected)" else "$choice arm")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    item {
                         DeviceControlCard(
                             deviceName = uiState.selectedDeviceName ?: "GETMS Device",
                             deviceAddress = uiState.selectedDeviceAddress ?: "",
                             isStreaming = uiState.isStreaming,
-                            isDeviceReady = uiState.isDeviceReady,
+                            isDeviceReady = uiState.isDeviceReady && !recording.busy && exercise.isNotBlank(),
                             fwVersion = uiState.deviceStatus?.fwVersion,
-                            onStartStream = { viewModel.startStreaming() },
+                            onStartStream = { viewModel.startStreaming(exercise, arm) },
                             onStopStream = { viewModel.stopStreaming() },
                             onDisconnect = { viewModel.disconnect() }
                         )
@@ -182,9 +209,7 @@ fun BleSensorScreen(
                     item {
                         EmgDataCard(
                             channelA = uiState.latestEmgChannelA,
-                            channelB = uiState.latestEmgChannelB,
-                            historyA = uiState.emgTraceHistoryA,
-                            historyB = uiState.emgTraceHistoryB
+                            historyA = uiState.emgTraceHistoryA
                         )
                     }
 
@@ -463,7 +488,7 @@ fun DeviceControlCard(
                     modifier = Modifier.weight(1f),
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32))
                 ) {
-                    Text(if (isDeviceReady) "Start Stream" else "Preparing…")
+                    Text(if (isDeviceReady) "Start Recording" else "Preparing…")
                 }
 
                 Button(
@@ -472,7 +497,7 @@ fun DeviceControlCard(
                     modifier = Modifier.weight(1f),
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFC62828))
                 ) {
-                    Text("Stop Stream")
+                    Text("Save Recording")
                 }
             }
         }
@@ -515,14 +540,12 @@ fun MetricStatItem(label: String, value: String) {
 @Composable
 fun EmgDataCard(
     channelA: Int,
-    channelB: Int,
-    historyA: List<Int>,
-    historyB: List<Int>
+    historyA: List<Int>
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
-                text = "EMG Sensors (2-Channel)",
+                text = "EMG Sensor",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold
             )
@@ -530,7 +553,7 @@ fun EmgDataCard(
 
             // Channel A
             Text(
-                text = "Channel A (Anterior Deltoid / Agonist): $channelA mV",
+                text = "EMG (Biceps): $channelA mV",
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.SemiBold
             )
@@ -544,38 +567,20 @@ fun EmgDataCard(
                 color = Color(0xFF1E88E5)
             )
 
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // Channel B
-            Text(
-                text = "Channel B (Posterior Deltoid / Antagonist): $channelB mV",
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.SemiBold
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-            LinearProgressIndicator(
-                progress = { (channelB.coerceIn(0, 3300) / 3300f) },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(8.dp)
-                    .clip(RoundedCornerShape(4.dp)),
-                color = Color(0xFFD81B60)
-            )
-
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Dual trace chart
+            // Live trace chart
             Text(
                 text = "Live EMG Signal Waveform",
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Spacer(modifier = Modifier.height(8.dp))
-            DualTraceCanvas(
-                dataA = historyA,
-                dataB = historyB,
-                colorA = Color(0xFF1E88E5),
-                colorB = Color(0xFFD81B60),
+            SingleTraceCanvas(
+                data = historyA.map { it.toFloat() },
+                lineColor = Color(0xFF1E88E5),
+                minY = 0f,
+                maxY = 3300f,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(100.dp)
@@ -654,50 +659,6 @@ fun ImuDataCard(
                     .fillMaxWidth()
                     .height(100.dp)
             )
-        }
-    }
-}
-
-@Composable
-fun DualTraceCanvas(
-    dataA: List<Int>,
-    dataB: List<Int>,
-    colorA: Color,
-    colorB: Color,
-    modifier: Modifier = Modifier
-) {
-    Canvas(
-        modifier = modifier
-            .background(Color(0xFF1E1E1E), shape = RoundedCornerShape(8.dp))
-            .padding(8.dp)
-    ) {
-        val width = size.width
-        val height = size.height
-
-        // Draw Channel A path
-        if (dataA.size >= 2) {
-            val pathA = Path()
-            val stepX = width / (dataA.size - 1).coerceAtLeast(1)
-            dataA.forEachIndexed { i, value ->
-                val x = i * stepX
-                val normY = (value.coerceIn(0, 3300) / 3300f)
-                val y = height - (normY * height)
-                if (i == 0) pathA.moveTo(x, y) else pathA.lineTo(x, y)
-            }
-            drawPath(path = pathA, color = colorA, style = Stroke(width = 3f))
-        }
-
-        // Draw Channel B path
-        if (dataB.size >= 2) {
-            val pathB = Path()
-            val stepX = width / (dataB.size - 1).coerceAtLeast(1)
-            dataB.forEachIndexed { i, value ->
-                val x = i * stepX
-                val normY = (value.coerceIn(0, 3300) / 3300f)
-                val y = height - (normY * height)
-                if (i == 0) pathB.moveTo(x, y) else pathB.lineTo(x, y)
-            }
-            drawPath(path = pathB, color = colorB, style = Stroke(width = 3f))
         }
     }
 }
