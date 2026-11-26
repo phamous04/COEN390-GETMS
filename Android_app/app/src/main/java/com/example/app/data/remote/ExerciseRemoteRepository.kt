@@ -2,6 +2,7 @@ package com.example.app.data.remote
 
 import com.example.app.data.local.ExerciseRepEntity
 import com.example.app.data.local.ExerciseSessionEntity
+import com.example.app.data.local.SessionStatus
 import com.example.app.data.local.SessionWithReps
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.Json
@@ -27,7 +28,8 @@ sealed interface RemoteSessions {
 }
 
 /**
- * Supabase side of exercise sessions. See supabase/migrations/20261118000000_exercise_sessions.sql.
+ * Supabase side of exercise sessions. See supabase/migrations/20261118000000_exercise_sessions.sql
+ * and 20261126000000_exercise_sets.sql (sets).
  * The server takes the patient id from the session JWT; the app never sends it for writes.
  */
 class ExerciseRemoteRepository {
@@ -79,6 +81,8 @@ object ExerciseJson {
         put("rep_count", s.repCount)
         put("clean_rep_count", s.cleanRepCount)
         put("target_reps", s.targetReps)
+        put("sets_planned", s.setsPlanned)
+        put("sets_completed", s.setsCompleted)
         put("reference_captured_at", s.referenceCapturedAtMillis?.let(::iso))
         put("reference_rom_ref_deg_x10", s.referenceRomRefX10)
         put("reference_mvc_mv", s.referenceMvcMv)
@@ -99,6 +103,7 @@ object ExerciseJson {
             add(
                 buildJsonObject {
                     put("set_type", r.setType)
+                    put("set_index", r.setIndex)
                     put("rep_index", r.repIndex)
                     put("start_ms", r.startMs)
                     put("duration_ms", r.durationMs)
@@ -120,13 +125,14 @@ object ExerciseJson {
         val list = (o["sessions"] as? JsonArray).orEmpty().map { item ->
             val s = item as JsonObject
             val id = s.string("id") ?: error("session id missing")
+            val status = s.string("status") ?: "interrupted"
             val session = ExerciseSessionEntity(
                 id = id,
                 patientId = patientId,
                 exerciseType = s.string("exercise_type") ?: "bicep_curl",
                 exercisingArm = s.string("exercising_arm") ?: "",
                 referenceArm = s.string("reference_arm") ?: "",
-                status = s.string("status") ?: "interrupted",
+                status = status,
                 createdAtMillis = millis(s.string("created_at")) ?: 0L,
                 startedAtMillis = millis(s.string("started_at")),
                 endedAtMillis = millis(s.string("ended_at")),
@@ -134,6 +140,9 @@ object ExerciseJson {
                 repCount = s.int("rep_count") ?: 0,
                 cleanRepCount = s.int("clean_rep_count") ?: 0,
                 targetReps = s.int("target_reps") ?: 0,
+                // A server without the sets migration has neither field: such a session was one set.
+                setsPlanned = s.int("sets_planned") ?: 1,
+                setsCompleted = s.int("sets_completed") ?: if (status == SessionStatus.COMPLETED) 1 else 0,
                 referenceCapturedAtMillis = millis(s.string("reference_captured_at")),
                 referenceRomRefX10 = s.int("reference_rom_ref_deg_x10"),
                 referenceMvcMv = s.int("reference_mvc_mv"),
@@ -155,6 +164,7 @@ object ExerciseJson {
                 ExerciseRepEntity(
                     sessionId = id,
                     setType = r.string("set_type") ?: "exercise",
+                    setIndex = r.int("set_index") ?: 1,
                     repIndex = r.int("rep_index") ?: 0,
                     startMs = r.long("start_ms") ?: 0,
                     durationMs = r.int("duration_ms") ?: 0,

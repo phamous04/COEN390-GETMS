@@ -10,10 +10,10 @@ import kotlin.math.abs
  * Comparison of the healthy-arm reference with the exercising arm, built only from measured
  * firmware values. No score or clinical interpretation is derived.
  *
- * Aggregation rule for the exercising arm: the arithmetic mean over **all counted reps** of the
- * set (clean or not), as stored from the Rep Events; the best (maximum) range of motion is shown
- * as well. The reference side is the single reference rep. Calibration rows compare the values
- * each arm's calibration reported.
+ * Aggregation rule for the exercising arm: the arithmetic mean over **all counted reps** of
+ * **every set** (clean or not), as stored from the Rep Events; the best (maximum) range of motion
+ * is shown as well. The reference side is the single reference rep. Calibration rows compare the
+ * values each arm's calibration reported.
  */
 object SessionMetrics {
 

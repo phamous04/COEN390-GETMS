@@ -6,6 +6,10 @@ owns capture in an application coroutine scope. The chart's lossy SharedFlows ar
 persistence. Choose an exercise and arm, start, then save. History shows the current account's
 recording/upload status, persisted errors and attempt counts.
 
+The Bicep Curl flow records one file per set, because the wearable restarts the EMG `seq` and
+`t0_us` at every START. The files of a session share its session ID, and the set is in the
+exercise label (`Bicep Curl · Set 1`, `Bicep Curl · Set 2`); the archive format is unchanged.
+
 ## Durability and recovery
 
 The UUID and owner are inserted into Room before collection. The private

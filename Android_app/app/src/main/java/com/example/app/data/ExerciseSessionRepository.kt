@@ -36,7 +36,7 @@ class ExerciseSessionRepository private constructor(context: Context) {
         if (reps.isNotEmpty()) dao.insertReps(reps)
     }
 
-    /** Replaces the stored reps of one set (used when the reference curl is re-recorded). */
+    /** Removes every stored rep of one set type (used when the reference curl is re-recorded). */
     suspend fun clearSet(sessionId: String, setType: String) = dao.deleteSet(sessionId, setType)
 
     /** Closes flows that an earlier app run left open, keeping any recorded data. */

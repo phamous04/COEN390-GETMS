@@ -17,6 +17,7 @@ import com.example.app.data.local.ExerciseRepEntity
 import com.example.app.data.local.ExerciseSessionEntity
 import com.example.app.data.local.SessionStatus
 import com.example.app.data.local.SetType
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
@@ -54,7 +55,9 @@ enum class FlowStep {
     /** Calibrated; Start is available. */
     READY,
     RECORDING,
-    /** Saving the session (final rep recovery). */
+    /** A set is done and another one follows: rest countdown, then START again. */
+    REST_BETWEEN_SETS,
+    /** Saving a set or the session (rep recovery from the wearable). */
     FINISHING,
     SUMMARY,
 }
@@ -77,10 +80,18 @@ data class ExerciseUiState(
     val referenceRep: RepEvent? = null,
     val referenceCalibration: CalibrationValues? = null,
     val exerciseCalibration: CalibrationValues? = null,
+    /** Reps / clean reps of the set being recorded, or of the set that just ended (the firmware counts per START). */
     val repCount: Int = 0,
     val cleanCount: Int = 0,
     val targetReps: Int = 0,
+    /** Recording time of that set. */
     val elapsedMs: Long = 0,
+    /** Which set is next or running, and the totals of the sets that ended. */
+    val sets: SetProgress = SetProgress(),
+    /** Seconds left of the rest before [currentSet]; 0 once the rest is over. */
+    val restSecondsLeft: Int = 0,
+    /** Stop was pressed before the previous set's target: ask whether to go on with [currentSet]. */
+    val confirmNextSet: Boolean = false,
     /** BLE dropped during recording; the device keeps recording. */
     val connectionLostWhileRecording: Boolean = false,
     val error: String? = null,
@@ -90,6 +101,13 @@ data class ExerciseUiState(
 ) {
     val referenceArm: Arm? get() = exercisingArm?.other
     val deviceState: DeviceState? get() = if (connected) deviceStatus?.deviceState else null
+    val currentSet: Int get() = sets.currentSet
+    val setsPlanned: Int get() = sets.setsPlanned
+
+    /** A set is recorded and the next one has not started: leaving now ends and saves the session. */
+    val betweenSets: Boolean
+        get() = currentSet > 1 &&
+            (step == FlowStep.REST_BETWEEN_SETS || step == FlowStep.EXERCISE_CALIBRATION || step == FlowStep.READY)
 
     /** Every precondition of the spec: connection, saved reference, calibrated exercising arm, device READY. */
     val canStartRecording: Boolean
@@ -102,11 +120,13 @@ data class CalibrationValues(val romRefX10: Int, val mvcMv: Int, val baselineMv:
 /**
  * Bicep Curl workflow over the real firmware protocol (firmware/Reband/BLE_PROTOCOL.md):
  * CALIBRATE 1-3 on the healthy arm -> START, first Rep Event, STOP (reference) -> CALIBRATE 1-3 on
- * the exercising arm -> START ... STOP (or the firmware's own target-reps stop).
+ * the exercising arm -> for each of the [SETS_PLANNED] sets: START ... STOP (or the firmware's own
+ * target-reps stop), with a rest in between. The device stays calibrated across the sets.
  *
  * Only one command is in flight at a time ([pending]); each step waits for the Status notification
  * that confirms it, so no conflicting or repeated commands are sent. Reps are written to Room as
- * they arrive, so an interruption never loses recorded reps.
+ * they arrive, so an interruption never loses recorded reps. The firmware restarts rep_index at
+ * every START, so each rep is stored under its set ([SetProgress]).
  */
 class ExerciseViewModel(app: Application) : AndroidViewModel(app) {
     private val ble = BleManager.get(app)
@@ -132,10 +152,19 @@ class ExerciseViewModel(app: Application) : AndroidViewModel(app) {
     private var pending: Pending? = null
     private var timeoutJob: Job? = null
     private var tickerJob: Job? = null
+    private var restJob: Job? = null
+    private var screenVisible = false
     private var startElapsed: Long = 0
+    /** Recording time of the sets that ended; rests are not counted. */
+    private var recordedMs = 0L
+    private var lastSetEndedAtMillis: Long? = null
+    // Per set: the firmware restarts rep_index and the EMG seq at every START.
+    /** The set whose Rep Events are being stored; null between sets, so a late replay is never filed under the next set. */
+    private var recordingSet: Int? = null
     private var lastExerciseRepIndex = 0
     private var exerciseRepsStored = mutableSetOf<Int>()
     private var lastEmgSeq = -1
+    // Per session.
     private var emgReceived = 0L
     private var emgLost = 0L
     private var errorFlagsSeen = 0
@@ -185,6 +214,11 @@ class ExerciseViewModel(app: Application) : AndroidViewModel(app) {
         if (_state.value.step == FlowStep.SUMMARY) resetState()
     }
 
+    /** The flow screen is (or is no longer) shown; the next set only starts by itself while it is. */
+    fun onScreenVisible(visible: Boolean) {
+        screenVisible = visible
+    }
+
     // --- Setup ----------------------------------------------------------------------------------
 
     fun selectExercisingArm(arm: Arm) {
@@ -203,6 +237,7 @@ class ExerciseViewModel(app: Application) : AndroidViewModel(app) {
             patientId = patient,
             exercisingArm = arm.db,
             referenceArm = arm.other.db,
+            setsPlanned = s.setsPlanned,
             createdAtMillis = now,
             updatedAtMillis = now,
         )
@@ -330,6 +365,7 @@ class ExerciseViewModel(app: Application) : AndroidViewModel(app) {
 
     // --- Exercising-arm recording ---------------------------------------------------------------
 
+    /** START of the set shown on the Ready screen: set 1, or a later set after a recalibration. */
     fun startRecording() {
         if (!_state.value.canStartRecording || !readyForCommand()) return
         send(Pending.Start(now()), "Starting…", 6_000) { ble.startRecording() }
@@ -342,17 +378,58 @@ class ExerciseViewModel(app: Application) : AndroidViewModel(app) {
         send(Pending.Stop(now()), "Stopping…", 6_000) { ble.stopRecording() }
     }
 
-    /** While disconnected: save what was recorded so far as an interrupted session. */
-    fun endInterruptedSession() {
+    /**
+     * Ends the rest ("Skip rest", "Start set N", or the countdown reaching zero) and starts the
+     * next set. The device is still calibrated in READY / STOPPED, so START is sent directly; in
+     * any other state the exercising arm is calibrated again first.
+     */
+    fun startNextSet() {
         val s = _state.value
-        if (s.step != FlowStep.RECORDING) return
-        finish(SessionStatus.INTERRUPTED, "The wearable disconnected during recording.")
+        if (s.step != FlowStep.REST_BETWEEN_SETS || s.confirmNextSet) return
+        if (!readyForCommand()) return
+        restJob?.cancel()
+        _state.update { it.copy(restSecondsLeft = 0) }
+        if (SetProgress.canStartWithoutCalibration(s.deviceState)) {
+            send(Pending.Start(now()), "Starting set ${s.currentSet}…", 6_000) { ble.startRecording() }
+        } else {
+            recalibrateForNextSet("The wearable is no longer calibrated.")
+        }
     }
 
-    /** Leaves the flow before recording started. Nothing recorded on the exercising arm is lost. */
+    /** "Continue to set N" after a set that was stopped early: rest first, as after a full set. */
+    fun continueToNextSet() {
+        val s = _state.value
+        if (s.step != FlowStep.REST_BETWEEN_SETS || !s.confirmNextSet) return
+        startRest()
+    }
+
+    /** Between two sets: skips the remaining sets and saves the session with the sets already recorded. */
+    fun endSession() {
+        val s = _state.value
+        if (!s.betweenSets) return
+        // STOP cancels a calibration in progress, and ends a recording whose START was just sent.
+        val stopDevice = pending is Pending.Start ||
+            s.deviceState == DeviceState.CALIBRATING || s.deviceState == DeviceState.RECORDING
+        restJob?.cancel()
+        clearPending()
+        if (stopDevice && s.connected) ble.stopRecording()
+        _state.update { it.copy(step = FlowStep.FINISHING, waiting = "Saving session…", confirmNextSet = false, restSecondsLeft = 0, error = null) }
+        viewModelScope.launch { saveSession(interruption = null) }
+    }
+
+    /** While disconnected: save what was recorded so far as an interrupted session. */
+    fun endInterruptedSession() {
+        interrupt("The wearable disconnected during recording.")
+    }
+
+    /**
+     * Leaves the flow before the exercising arm started recording, discarding the reference and
+     * calibration. Once a set is recorded the session is ended with [endSession] instead, so
+     * nothing recorded on the exercising arm is lost.
+     */
     fun cancelFlow() {
         val s = _state.value
-        if (s.step == FlowStep.RECORDING || s.step == FlowStep.FINISHING) return
+        if (s.step == FlowStep.RECORDING || s.step == FlowStep.FINISHING || s.betweenSets) return
         if (s.deviceState == DeviceState.CALIBRATING && s.connected) ble.stopRecording() // STOP cancels a calibration
         if (s.deviceState == DeviceState.RECORDING && s.connected) ble.stopRecording()
         val patient = patientId
@@ -394,13 +471,13 @@ class ExerciseViewModel(app: Application) : AndroidViewModel(app) {
             is Pending.Start -> if (status.deviceState == DeviceState.RECORDING) {
                 clearPending()
                 _state.update { it.copy(waiting = null) }
-                if (s.step == FlowStep.READY) onExerciseRecordingStarted(status)
+                if (s.step == FlowStep.READY || s.step == FlowStep.REST_BETWEEN_SETS) onExerciseRecordingStarted(status)
             }
             is Pending.Stop -> if (status.deviceState == DeviceState.STOPPED) {
                 clearPending()
                 _state.update { it.copy(waiting = null) }
                 if (s.step == FlowStep.REFERENCE_RECORD) onReferenceStopped()
-                else if (s.step == FlowStep.RECORDING) onExerciseStopped(status)
+                else if (s.step == FlowStep.RECORDING) onSetStopped(status, stoppedByUser = true)
             }
             null -> Unit
         }
@@ -417,9 +494,9 @@ class ExerciseViewModel(app: Application) : AndroidViewModel(app) {
                     }
                 }
                 // Target reps reached on the device, or STOP seen after a reconnect.
-                DeviceState.STOPPED -> onExerciseStopped(status)
+                DeviceState.STOPPED -> onSetStopped(status, stoppedByUser = false)
                 DeviceState.IDLE, DeviceState.READY, DeviceState.CALIBRATING ->
-                    finish(SessionStatus.INTERRUPTED, "The wearable stopped recording unexpectedly (state ${status.deviceState.name.lowercase()}).")
+                    interrupt("The wearable stopped recording unexpectedly (state ${status.deviceState.name.lowercase()}).")
                 else -> Unit
             }
         }
@@ -428,6 +505,7 @@ class ExerciseViewModel(app: Application) : AndroidViewModel(app) {
     private fun onDeviceError(status: DeviceStatus) {
         val message = DeviceErrors.message(status.errorCode)
         val s = _state.value
+        val startRefused = pending is Pending.Start
         clearPending()
         when (s.step) {
             FlowStep.REFERENCE_CALIBRATION, FlowStep.EXERCISE_CALIBRATION ->
@@ -437,7 +515,11 @@ class ExerciseViewModel(app: Application) : AndroidViewModel(app) {
                 _state.update { it.copy(waiting = null, error = "$message Calibrate the healthy arm again.") }
             FlowStep.READY ->
                 _state.update { it.copy(waiting = null, error = message) }
-            FlowStep.RECORDING -> finish(SessionStatus.INTERRUPTED, "Wearable error: $message")
+            FlowStep.RECORDING -> interrupt("Wearable error: $message")
+            FlowStep.REST_BETWEEN_SETS -> {
+                // START for the next set was refused: the calibration is gone.
+                if (startRefused) recalibrateForNextSet(message) else _state.update { it.copy(waiting = null, error = message) }
+            }
             else -> _state.update { it.copy(waiting = null, error = message) }
         }
     }
@@ -449,15 +531,16 @@ class ExerciseViewModel(app: Application) : AndroidViewModel(app) {
             FlowStep.REFERENCE_RECORD -> {
                 if (s.referenceRep != null || rep.repIndex != 1) return
                 _state.update { it.copy(referenceRep = rep) }
-                db { repo.addReps(listOf(rep.toEntity(sessionId, SetType.REFERENCE))) }
+                db { repo.addReps(listOf(rep.toEntity(sessionId, SetType.REFERENCE, setIndex = 1))) }
                 // One reference curl is all we need: stop the device right away.
                 if (pending == null) send(Pending.Stop(now()), "Reference curl captured. Stopping…", 6_000) { ble.stopRecording() }
             }
             FlowStep.RECORDING, FlowStep.FINISHING -> {
+                val set = recordingSet ?: return
                 if (rep.repIndex in exerciseRepsStored) return
                 exerciseRepsStored += rep.repIndex
                 lastExerciseRepIndex = maxOf(lastExerciseRepIndex, rep.repIndex)
-                db { repo.addReps(listOf(rep.toEntity(sessionId, SetType.EXERCISE))) }
+                db { repo.addReps(listOf(rep.toEntity(sessionId, SetType.EXERCISE, setIndex = set))) }
                 _state.update { it.copy(repCount = maxOf(it.repCount, rep.repIndex)) }
             }
             else -> Unit
@@ -474,20 +557,34 @@ class ExerciseViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun onExerciseRecordingStarted(status: DeviceStatus) {
         val now = System.currentTimeMillis()
+        val set = _state.value.currentSet
+        restJob?.cancel()
         startElapsed = SystemClock.elapsedRealtime()
+        recordingSet = set
         lastExerciseRepIndex = 0
         exerciseRepsStored = mutableSetOf()
         lastEmgSeq = -1
-        emgReceived = 0
-        emgLost = 0
-        session = session?.copy(startedAtMillis = now, targetReps = status.targetReps, updatedAtMillis = now)
+        // startedAtMillis is the first set's START.
+        session = session?.let { it.copy(startedAtMillis = it.startedAtMillis ?: now, targetReps = status.targetReps, updatedAtMillis = now) }
         persist()
-        _state.update { it.copy(step = FlowStep.RECORDING, repCount = 0, cleanCount = 0, elapsedMs = 0, error = null) }
+        _state.update {
+            it.copy(
+                step = FlowStep.RECORDING,
+                repCount = 0,
+                cleanCount = 0,
+                elapsedMs = 0,
+                targetReps = status.targetReps,
+                restSecondsLeft = 0,
+                confirmNextSet = false,
+                error = null,
+            )
+        }
         // Also keep the raw EMG stream of this set in a durable local file, linked to the session id
-        // and uploaded to Storage in the background. Capture only; it never sends START/STOP.
+        // and uploaded to Storage in the background: one file per set, named after it, because the
+        // EMG seq and t0_us restart with the set. Capture only; it never sends START/STOP.
         _state.value.exercisingArm?.let { arm ->
             sensorRecorder.start(
-                exercise = "Bicep Curl",
+                exercise = "Bicep Curl · Set $set",
                 arm = if (arm == Arm.LEFT) "Left" else "Right",
                 controlDevice = false,
                 sessionId = _state.value.sessionId,
@@ -502,10 +599,127 @@ class ExerciseViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private fun onExerciseStopped(status: DeviceStatus) {
-        val count = status.repCount
-        _state.update { it.copy(repCount = count, cleanCount = status.cleanCount) }
-        finish(if (count > 0) SessionStatus.COMPLETED else SessionStatus.INCOMPLETE, null, status)
+    /** The device reported STOPPED for the running set: its target was reached, or it answered our STOP. */
+    private fun onSetStopped(status: DeviceStatus, stoppedByUser: Boolean) {
+        val before = _state.value.sets
+        val waiting = if (before.hasNextSet) "Saving set ${before.currentSet}…" else "Saving session…"
+        if (!closeRunningSet(captureNote = null, waiting = waiting)) return
+        _state.update { it.copy(repCount = status.repCount, cleanCount = status.cleanCount) }
+        viewModelScope.launch {
+            // Before the next START: the device only keeps the reps since its last START.
+            recoverMissingReps(status.repCount)
+            recordingSet = null
+            val reps = maxOf(_state.value.repCount, status.repCount)
+            val (sets, after) = before.setStopped(reps, status.cleanCount, status.targetReps, stoppedByUser)
+            _state.update { it.copy(sets = sets) }
+            when (after) {
+                AfterSet.FINISH -> saveSession(interruption = null)
+                AfterSet.REST -> {
+                    persistProgress()
+                    startRest()
+                }
+                AfterSet.CONFIRM_NEXT_SET -> {
+                    persistProgress()
+                    _state.update {
+                        it.copy(step = FlowStep.REST_BETWEEN_SETS, restSecondsLeft = REST_SECONDS, confirmNextSet = true, waiting = null)
+                    }
+                }
+            }
+        }
+    }
+
+    /** Ends the session during a set the device did not finish. Everything recorded so far is kept. */
+    private fun interrupt(reason: String) {
+        if (!closeRunningSet(captureNote = reason, waiting = "Saving session…")) return
+        viewModelScope.launch {
+            recoverMissingReps(_state.value.repCount)
+            recordingSet = null
+            _state.update { it.copy(sets = it.sets.setInterrupted(it.repCount, it.cleanCount)) }
+            saveSession(interruption = reason)
+        }
+    }
+
+    /** Stops the timer and the raw capture of the running set. False when no set is being recorded. */
+    private fun closeRunningSet(captureNote: String?, waiting: String): Boolean {
+        if (_state.value.step != FlowStep.RECORDING) return false
+        tickerJob?.cancel()
+        clearPending()
+        sensorRecorder.stop(captureNote)
+        val setDuration = SystemClock.elapsedRealtime() - startElapsed
+        recordedMs += setDuration
+        lastSetEndedAtMillis = System.currentTimeMillis()
+        _state.update {
+            it.copy(step = FlowStep.FINISHING, elapsedMs = setDuration, waiting = waiting, connectionLostWhileRecording = false)
+        }
+        return true
+    }
+
+    /**
+     * Rep Events can be lost over BLE. The device keeps the reps since its last START (up to 32),
+     * so a gap in the set that just ended is recovered once, while they are still there.
+     */
+    private suspend fun recoverMissingReps(expected: Int) {
+        val missing = (1..expected).any { it !in exerciseRepsStored }
+        if (missing && _state.value.connected) {
+            ble.requestReps(1)
+            delay(1_500)
+        }
+    }
+
+    // --- Between sets ---------------------------------------------------------------------------
+
+    private fun startRest() {
+        restJob?.cancel()
+        _state.update {
+            it.copy(step = FlowStep.REST_BETWEEN_SETS, restSecondsLeft = REST_SECONDS, confirmNextSet = false, waiting = null)
+        }
+        restJob = viewModelScope.launch {
+            val end = SystemClock.elapsedRealtime() + REST_SECONDS * 1000L
+            while (true) {
+                val left = ((end - SystemClock.elapsedRealtime() + 999) / 1000).toInt().coerceAtLeast(0)
+                _state.update { it.copy(restSecondsLeft = left) }
+                if (left == 0) break
+                delay(250)
+            }
+            restJob = null
+            // The wearable is only started by itself while the patient is watching the countdown end
+            // (not after the app was in the background or asleep); otherwise "Start set N" waits.
+            val onTime = SystemClock.elapsedRealtime() - end < 1_000
+            if (onTime && screenVisible && sensorRecorder.inForeground) startNextSet()
+        }
+    }
+
+    /** The device lost its calibration between two sets: calibrate the exercising arm again, then Start. */
+    private fun recalibrateForNextSet(reason: String) {
+        restJob?.cancel()
+        _state.update {
+            it.copy(
+                step = FlowStep.EXERCISE_CALIBRATION,
+                calibration = CalibrationProgress(),
+                exerciseCalibration = null,
+                restSecondsLeft = 0,
+                waiting = null,
+                notice = null,
+                error = "$reason Calibrate your exercising arm again to continue with set ${it.currentSet}.",
+            )
+        }
+    }
+
+    /** Keeps the totals of the sets recorded so far in Room, so they survive the app closing during a rest. */
+    private fun persistProgress() {
+        val sets = _state.value.sets
+        session = session?.copy(
+            endedAtMillis = lastSetEndedAtMillis,
+            durationMs = recordedMs,
+            repCount = sets.repCount,
+            cleanRepCount = sets.cleanCount,
+            setsCompleted = sets.setsCompleted,
+            emgPacketsReceived = emgReceived,
+            emgPacketsLost = emgLost,
+            deviceErrorFlags = errorFlagsSeen,
+            updatedAtMillis = System.currentTimeMillis(),
+        )
+        persist()
     }
 
     private fun onConnectionLost() {
@@ -526,44 +740,46 @@ class ExerciseViewModel(app: Application) : AndroidViewModel(app) {
 
     // --- Finishing ------------------------------------------------------------------------------
 
-    private fun finish(status: String, reason: String?, deviceStatus: DeviceStatus? = null) {
-        val s = _state.value
-        if (s.step != FlowStep.RECORDING) return
-        tickerJob?.cancel()
-        clearPending()
-        sensorRecorder.stop(reason)
-        val endedAt = System.currentTimeMillis()
-        val duration = SystemClock.elapsedRealtime() - startElapsed
-        _state.update { it.copy(step = FlowStep.FINISHING, elapsedMs = duration, waiting = "Saving session…") }
-        viewModelScope.launch {
-            // Rep Events can be lost over BLE; the device keeps the last 32. Recover any gap once.
-            val expected = deviceStatus?.repCount ?: s.repCount
-            val missing = (1..expected).any { it !in exerciseRepsStored }
-            if (missing && _state.value.connected) {
-                ble.requestReps(1)
-                delay(1_500)
-            }
-            val final = _state.value
-            val saved = session?.copy(
-                status = status,
-                endedAtMillis = endedAt,
-                durationMs = duration,
-                repCount = maxOf(final.repCount, deviceStatus?.repCount ?: 0),
-                cleanRepCount = deviceStatus?.cleanCount ?: final.cleanCount,
-                emgPacketsReceived = emgReceived,
-                emgPacketsLost = emgLost,
-                deviceErrorFlags = errorFlagsSeen,
-                interruptionReason = reason,
-                synced = false,
-                updatedAtMillis = System.currentTimeMillis(),
-            ) ?: return@launch
-            session = saved
-            val done = kotlinx.coroutines.CompletableDeferred<Unit>()
-            db { repo.save(saved); done.complete(Unit) }
-            done.await()
-            _state.update { it.copy(step = FlowStep.SUMMARY, waiting = null, savedSessionId = saved.id, connectionLostWhileRecording = false) }
-            repo.syncPending(saved.patientId)
+    /**
+     * Saves the session with the totals of every recorded set, shows the summary and uploads.
+     * [interruption] is why a set ended without the device stopping it, null for a normal end.
+     */
+    private suspend fun saveSession(interruption: String?) {
+        val sets = _state.value.sets
+        val saved = session?.copy(
+            status = when {
+                interruption != null -> SessionStatus.INTERRUPTED
+                sets.repCount > 0 -> SessionStatus.COMPLETED
+                else -> SessionStatus.INCOMPLETE
+            },
+            endedAtMillis = lastSetEndedAtMillis ?: System.currentTimeMillis(),
+            durationMs = recordedMs,
+            repCount = sets.repCount,
+            cleanRepCount = sets.cleanCount,
+            setsPlanned = sets.setsPlanned,
+            setsCompleted = sets.setsCompleted,
+            emgPacketsReceived = emgReceived,
+            emgPacketsLost = emgLost,
+            deviceErrorFlags = errorFlagsSeen,
+            interruptionReason = interruption,
+            synced = false,
+            updatedAtMillis = System.currentTimeMillis(),
+        ) ?: return
+        session = saved
+        val done = CompletableDeferred<Unit>()
+        db { repo.save(saved); done.complete(Unit) }
+        done.await()
+        _state.update {
+            it.copy(
+                step = FlowStep.SUMMARY,
+                waiting = null,
+                savedSessionId = saved.id,
+                connectionLostWhileRecording = false,
+                confirmNextSet = false,
+                restSecondsLeft = 0,
+            )
         }
+        repo.syncPending(saved.patientId)
     }
 
     // --- Helpers --------------------------------------------------------------------------------
@@ -618,8 +834,17 @@ class ExerciseViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun resetState() {
         tickerJob?.cancel()
+        restJob?.cancel()
         clearPending()
         session = null
+        recordingSet = null
+        exerciseRepsStored = mutableSetOf()
+        lastExerciseRepIndex = 0
+        recordedMs = 0
+        lastSetEndedAtMillis = null
+        lastEmgSeq = -1
+        emgReceived = 0
+        emgLost = 0
         errorFlagsSeen = 0
         _state.value = ExerciseUiState(
             sessionId = UUID.randomUUID().toString(),
@@ -632,9 +857,10 @@ class ExerciseViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun now() = SystemClock.elapsedRealtime()
 
-    private fun RepEvent.toEntity(sessionId: String, setType: String) = ExerciseRepEntity(
+    private fun RepEvent.toEntity(sessionId: String, setType: String, setIndex: Int) = ExerciseRepEntity(
         sessionId = sessionId,
         setType = setType,
+        setIndex = setIndex,
         repIndex = repIndex,
         startMs = startMs,
         durationMs = durationMs,

@@ -16,6 +16,7 @@ import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -44,7 +45,7 @@ import kotlinx.coroutines.flow.Flow
 
 /**
  * Bicep Curl session: setup → healthy-arm calibration → reference curl → switch arm →
- * exercising-arm calibration → recording → summary. One route; the ViewModel owns the step.
+ * exercising-arm calibration → set 1 → rest → set 2 → summary. One route; the ViewModel owns the step.
  */
 @Composable
 fun ExerciseFlowScreen(
@@ -56,12 +57,18 @@ fun ExerciseFlowScreen(
 ) {
     val state by viewModel.state.collectAsState()
     var confirmLeave by remember { mutableStateOf(false) }
+    var confirmEnd by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { viewModel.onOpened() }
+    DisposableEffect(viewModel) {
+        viewModel.onScreenVisible(true)
+        onDispose { viewModel.onScreenVisible(false) }
+    }
 
     val leave = {
-        when (state.step) {
-            FlowStep.RECORDING, FlowStep.FINISHING -> Unit // must Stop first (or end while disconnected)
-            FlowStep.SETUP, FlowStep.SUMMARY -> { viewModel.cancelFlow(); onExit() }
+        when {
+            state.step == FlowStep.RECORDING || state.step == FlowStep.FINISHING -> Unit // must Stop first (or end while disconnected)
+            state.step == FlowStep.SETUP || state.step == FlowStep.SUMMARY -> { viewModel.cancelFlow(); onExit() }
+            state.betweenSets -> confirmEnd = true // a set is already recorded: end and save, never discard
             else -> confirmLeave = true
         }
     }
@@ -73,6 +80,7 @@ fun ExerciseFlowScreen(
         FlowStep.SWITCH_ARM -> "Switch Arms"
         FlowStep.EXERCISE_CALIBRATION, FlowStep.READY -> "Prepare Exercising Arm"
         FlowStep.RECORDING, FlowStep.FINISHING -> "Bicep Curl"
+        FlowStep.REST_BETWEEN_SETS -> "Rest"
         FlowStep.SUMMARY -> "Session Summary"
     }
     val canGoBack = state.step != FlowStep.RECORDING && state.step != FlowStep.FINISHING
@@ -98,11 +106,17 @@ fun ExerciseFlowScreen(
             FlowStep.SWITCH_ARM -> SwitchArmStep(state, viewModel)
             FlowStep.EXERCISE_CALIBRATION -> CalibrationStep(
                 state, viewModel,
-                intro = "Now calibrate the wearable on your exercising arm (${state.exercisingArm?.label?.lowercase()}).",
+                intro = if (state.currentSet > 1) {
+                    "Calibrate the wearable on your exercising arm (${state.exercisingArm?.label?.lowercase()}) again, " +
+                        "then continue with set ${state.currentSet}. Your earlier reps are saved."
+                } else {
+                    "Now calibrate the wearable on your exercising arm (${state.exercisingArm?.label?.lowercase()})."
+                },
                 armLabel = "exercising ${state.exercisingArm?.label?.lowercase()}",
             )
             FlowStep.READY -> ReadyStep(state, viewModel)
             FlowStep.RECORDING, FlowStep.FINISHING -> RecordingStep(state, viewModel, onConnectWearable)
+            FlowStep.REST_BETWEEN_SETS -> RestStep(state, viewModel, onEndSession = { confirmEnd = true })
             FlowStep.SUMMARY -> SummaryStep(state, savedSession, onOpenHistory, onDone = { viewModel.cancelFlow(); onExit() })
         }
     }
@@ -115,6 +129,30 @@ fun ExerciseFlowScreen(
             destructive = true,
             onConfirm = { confirmLeave = false; viewModel.cancelFlow(); onExit() },
             onDismiss = { confirmLeave = false },
+        )
+    }
+    if (state.confirmNextSet) {
+        // Stop was pressed before the set's target. The patient has to choose: no dismissing by tapping outside.
+        ConfirmDialog(
+            title = "Set ${state.currentSet - 1} stopped early",
+            text = "You did ${state.repCount} of ${state.targetReps} reps, and they are saved. " +
+                "Continue to set ${state.currentSet} after a short rest, or end the session here?",
+            confirmLabel = "Continue to set ${state.currentSet}",
+            destructive = false,
+            onConfirm = viewModel::continueToNextSet,
+            onDismiss = viewModel::endSession,
+            dismissLabel = "End session",
+            onDismissRequest = {},
+        )
+    } else if (confirmEnd && state.betweenSets) {
+        ConfirmDialog(
+            title = "End this session?",
+            text = "Your reps so far are saved. The session will end without set ${state.currentSet}.",
+            confirmLabel = "End session",
+            destructive = true,
+            onConfirm = { confirmEnd = false; viewModel.endSession() },
+            onDismiss = { confirmEnd = false },
+            dismissLabel = "Keep going",
         )
     }
 }
@@ -136,7 +174,8 @@ private fun SetupStep(state: ExerciseUiState, vm: ExerciseViewModel) {
             Text("Exercise", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text("Bicep Curl", style = MaterialTheme.typography.titleLarge)
             Text(
-                "You'll do one reference curl with your healthy arm, then your exercise set with the other arm.",
+                "You'll do one reference curl with your healthy arm, then $SETS_PLANNED sets with the other arm, " +
+                    "with a short rest in between.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -281,7 +320,10 @@ private fun ReadyStep(state: ExerciseUiState, vm: ExerciseViewModel) {
     MessageBanner("Calibration complete. You're ready to exercise.", isError = false)
     ReBandCard {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("Bicep Curl · ${state.exercisingArm?.label}", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "Bicep Curl · ${state.exercisingArm?.label} · Set ${state.currentSet} of ${state.setsPlanned}",
+                style = MaterialTheme.typography.titleMedium,
+            )
             Text("Curl at a steady pace with full range. Press Stop when you're done.", style = MaterialTheme.typography.bodyLarge)
             if (state.targetReps > 0) {
                 Text("The wearable ends the set by itself after ${state.targetReps} reps.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -309,6 +351,7 @@ private fun RecordingStep(state: ExerciseUiState, vm: ExerciseViewModel, onConne
     ReBandCard {
         Column(Modifier.padding(vertical = 24.dp, horizontal = 16.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Text("Bicep Curl", style = MaterialTheme.typography.headlineSmall)
+            SetLabel(state.currentSet, state.setsPlanned)
             RepetitionCounter(state.repCount, state.targetReps)
             ExerciseTimer(state.elapsedMs)
         }
@@ -329,6 +372,43 @@ private fun RecordingStep(state: ExerciseUiState, vm: ExerciseViewModel, onConne
         Waiting(state)
         PrimaryButton("Stop", onClick = vm::stopRecording, enabled = state.connected && state.waiting == null, height = 64.dp)
     }
+}
+
+/** Between two sets: what was just done, the countdown, and what comes next. */
+@Composable
+private fun RestStep(state: ExerciseUiState, vm: ExerciseViewModel, onEndSession: () -> Unit) {
+    val resting = state.restSecondsLeft > 0
+    ReBandCard {
+        Column(Modifier.padding(vertical = 24.dp, horizontal = 16.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            Text(
+                "Set ${state.currentSet - 1} done · ${state.repCount} ${if (state.repCount == 1) "rep" else "reps"}",
+                style = MaterialTheme.typography.headlineSmall,
+            )
+            RestCountdown(state.restSecondsLeft)
+            Text(
+                "Next: Set ${state.currentSet}" + if (state.targetReps > 0) " · ${state.targetReps} reps" else "",
+                style = MaterialTheme.typography.titleMedium,
+            )
+        }
+    }
+    Waiting(state)
+    PrimaryButton(
+        if (resting) "Skip rest" else "Start set ${state.currentSet}",
+        onClick = vm::startNextSet,
+        enabled = state.connected && state.waiting == null && !state.confirmNextSet,
+        loading = state.waiting != null,
+        height = 64.dp,
+    )
+    Text(
+        when {
+            !state.connected -> "Reconnect the wearable to start set ${state.currentSet}."
+            resting -> "Set ${state.currentSet} starts by itself when the rest is over. Keep the wearable on."
+            else -> "Start set ${state.currentSet} when you're ready."
+        },
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    OutlineAction("End session", MaterialTheme.colorScheme.error, onEndSession, Modifier.fillMaxWidth(), enabled = state.waiting == null)
 }
 
 @Composable

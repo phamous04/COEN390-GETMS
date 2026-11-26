@@ -63,6 +63,9 @@ class RecordingManager(
         if (!value) stop("App left the foreground; recording saved on this device")
     }
 
+    /** True while the app is on screen. Capture needs it; the exercise flow also checks it before starting a set by itself. */
+    val inForeground: Boolean get() = foreground
+
     /**
      * Starts durable capture. With [controlDevice] (the developer sensor screen) this also sends
      * START/STOP. The exercise workflow passes false and its own [sessionId]: it owns the device

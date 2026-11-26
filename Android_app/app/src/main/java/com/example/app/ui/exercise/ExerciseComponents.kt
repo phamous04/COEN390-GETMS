@@ -113,6 +113,33 @@ fun CalibrationProgressCard(progress: CalibrationProgress, armLabel: String) {
     }
 }
 
+/** "Set 1 of 2", shown above the repetition counter. */
+@Composable
+fun SetLabel(currentSet: Int, setsPlanned: Int, modifier: Modifier = Modifier) {
+    Text(
+        "Set $currentSet of $setsPlanned",
+        modifier = modifier,
+        style = MaterialTheme.typography.titleLarge,
+        fontWeight = FontWeight.SemiBold,
+        color = Teal,
+    )
+}
+
+/** Large rest countdown between two sets. */
+@Composable
+fun RestCountdown(secondsLeft: Int, modifier: Modifier = Modifier) {
+    val over = secondsLeft <= 0
+    Column(
+        modifier.fillMaxWidth().semantics(mergeDescendants = true) {
+            contentDescription = if (over) "Rest over" else "Rest: $secondsLeft seconds left"
+        },
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(if (over) "Rest over" else "Rest", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(SessionMetrics.clock(secondsLeft * 1000L), fontSize = 72.sp, fontWeight = FontWeight.Bold, color = Teal, textAlign = TextAlign.Center)
+    }
+}
+
 /** Large, screen-reader friendly repetition count. */
 @Composable
 fun RepetitionCounter(count: Int, target: Int, modifier: Modifier = Modifier) {

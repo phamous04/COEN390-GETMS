@@ -1,5 +1,6 @@
 package com.example.app.data.local
 
+import androidx.room.ColumnInfo
 import androidx.room.Embedded
 import androidx.room.Entity
 import androidx.room.ForeignKey
@@ -10,7 +11,7 @@ import androidx.room.Relation
 object SessionStatus {
     /** Flow still running (reference captured, exercising arm not finished). Hidden from history. */
     const val IN_PROGRESS = "in_progress"
-    /** The device reached STOPPED (Stop pressed or target reps) with at least one counted rep. */
+    /** Ended normally (last set STOPPED, or the patient ended between sets) with at least one counted rep. */
     const val COMPLETED = "completed"
     /** Stopped normally but no exercising-arm rep was counted. */
     const val INCOMPLETE = "incomplete"
@@ -26,13 +27,13 @@ object ExerciseType {
 object SetType {
     /** The single healthy-arm reference curl. */
     const val REFERENCE = "reference"
-    /** Reps of the exercising arm. */
+    /** Reps of the exercising arm, in one or more sets ([ExerciseRepEntity.setIndex]). */
     const val EXERCISE = "exercise"
 }
 
 /**
  * One Bicep Curl session: the healthy-arm reference (calibration + one rep) and the exercising-arm
- * recording. Every number comes from the firmware Status / Rep Event characteristics, in the
+ * sets. Every number comes from the firmware Status / Rep Event characteristics, in the
  * firmware's own units: `X10` fields are tenths (degrees x10, % MVC x10), `Mv` fields millivolts.
  * Times are phone wall-clock epoch milliseconds.
  */
@@ -46,16 +47,21 @@ data class ExerciseSessionEntity(
     val referenceArm: String,
     val status: String = SessionStatus.IN_PROGRESS,
     val createdAtMillis: Long,
-    /** When the device confirmed RECORDING for the exercising arm. */
+    /** When the device confirmed RECORDING for the first exercising-arm set. */
     val startedAtMillis: Long? = null,
-    /** When the device reported STOPPED (or the session was ended as interrupted). */
+    /** When the last recorded set ended (device STOPPED, or the set was interrupted). */
     val endedAtMillis: Long? = null,
+    /** Recording time summed over the sets; rests between sets are not counted. */
     val durationMs: Long? = null,
-    /** Firmware rep_count / clean_count for the exercising arm. */
+    /** Firmware rep_count / clean_count for the exercising arm, summed over all sets. */
     val repCount: Int = 0,
     val cleanRepCount: Int = 0,
-    /** Firmware target_reps (0 = unlimited). */
+    /** Firmware target_reps per set (0 = unlimited). */
     val targetReps: Int = 0,
+    /** Exercising-arm sets the flow planned; 1 for sessions recorded before sets existed. */
+    @ColumnInfo(defaultValue = "1") val setsPlanned: Int = 1,
+    /** Sets the device ended in STOPPED (Stop pressed or target reps) with at least one counted rep. */
+    @ColumnInfo(defaultValue = "0") val setsCompleted: Int = 0,
 
     // Healthy-arm reference: calibration values from the Status characteristic (state READY)
     val referenceCapturedAtMillis: Long? = null,
@@ -83,10 +89,13 @@ data class ExerciseSessionEntity(
     val updatedAtMillis: Long,
 )
 
-/** One Rep Event as sent by the firmware, per set. Primary key de-duplicates GET_REPS replays. */
+/**
+ * One Rep Event as sent by the firmware. The primary key de-duplicates GET_REPS replays, and
+ * [setIndex] keeps the sets apart: the firmware restarts rep_index at every START.
+ */
 @Entity(
     tableName = "exercise_reps",
-    primaryKeys = ["sessionId", "setType", "repIndex"],
+    primaryKeys = ["sessionId", "setType", "setIndex", "repIndex"],
     foreignKeys = [
         ForeignKey(
             entity = ExerciseSessionEntity::class,
@@ -100,6 +109,9 @@ data class ExerciseSessionEntity(
 data class ExerciseRepEntity(
     val sessionId: String,
     val setType: String,
+    /** 1-based set of the exercising arm; always 1 for the reference curl. */
+    @ColumnInfo(defaultValue = "1") val setIndex: Int = 1,
+    /** Firmware rep_index: 1, 2, 3, … since the START of that set. */
     val repIndex: Int,
     /** ms since the firmware START of that set. */
     val startMs: Long,
@@ -120,5 +132,10 @@ data class SessionWithReps(
     val reps: List<ExerciseRepEntity>,
 ) {
     val referenceRep: ExerciseRepEntity? get() = reps.filter { it.setType == SetType.REFERENCE }.minByOrNull { it.repIndex }
-    val exerciseReps: List<ExerciseRepEntity> get() = reps.filter { it.setType == SetType.EXERCISE }.sortedBy { it.repIndex }
+    /** Every exercising-arm rep, in set order and then rep order. */
+    val exerciseReps: List<ExerciseRepEntity>
+        get() = reps.filter { it.setType == SetType.EXERCISE }.sortedWith(compareBy({ it.setIndex }, { it.repIndex }))
+
+    /** Exercising-arm reps by set index, in set order. A set without stored reps has no entry. */
+    val exerciseSets: Map<Int, List<ExerciseRepEntity>> get() = exerciseReps.groupBy { it.setIndex }
 }

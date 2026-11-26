@@ -12,6 +12,7 @@ import com.example.app.data.remote.ExerciseJson
 import com.example.app.data.remote.RemoteSessions
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
@@ -44,8 +45,8 @@ class SessionDataTest {
         updatedAtMillis = 0,
     )
 
-    private fun rep(set: String, i: Int, rom: Int, dur: Int, flags: Int = RepFlags.CLEAN) =
-        ExerciseRepEntity("s1", set, i, 0, dur, rom, 500, 250, 5, 3, 2, flags)
+    private fun rep(set: String, i: Int, rom: Int, dur: Int, flags: Int = RepFlags.CLEAN, setIndex: Int = 1) =
+        ExerciseRepEntity("s1", set, setIndex, i, 0, dur, rom, 500, 250, 5, 3, 2, flags)
 
     @Test
     fun comparisonUsesMeanOfAllCountedReps() {
@@ -80,6 +81,27 @@ class SessionDataTest {
         assertNull(rom.difference)
     }
 
+    /** rep_index restarts in every set: reps are kept apart by set, and the comparison uses all of them. */
+    @Test
+    fun repsAreGroupedBySet() {
+        val data = SessionWithReps(
+            session("s1", SessionStatus.COMPLETED, LocalDateTime.of(2026, 11, 16, 10, 0)),
+            listOf(
+                rep(SetType.EXERCISE, 1, rom = 700, dur = 1500, setIndex = 2),
+                rep(SetType.EXERCISE, 2, rom = 1000, dur = 1500),
+                rep(SetType.REFERENCE, 1, rom = 1200, dur = 2000),
+                rep(SetType.EXERCISE, 1, rom = 900, dur = 1500),
+            ),
+        )
+        assertEquals(listOf(1, 2), data.exerciseSets.keys.toList())
+        assertEquals(listOf(900, 1000), data.exerciseSets.getValue(1).map { it.romX10 })
+        assertEquals(listOf(700), data.exerciseSets.getValue(2).map { it.romX10 })
+        assertEquals(listOf(1 to 1, 1 to 2, 2 to 1), data.exerciseReps.map { it.setIndex to it.repIndex })
+        assertEquals(1200, data.referenceRep!!.romX10)
+        val rom = SessionMetrics.comparison(data).first { it.label == "Range of motion per rep" }
+        assertEquals((90.0 + 100.0 + 70.0) / 3, rom.exercising!!, 1e-9)
+    }
+
     @Test
     fun weeklyCountsCompletedDaysOnceInLocalTime() {
         val sessions = listOf(
@@ -103,10 +125,16 @@ class SessionDataTest {
     @Test
     fun sessionJsonRoundTrip() {
         val s = session("6f1c2d3e-0000-4000-8000-000000000001", SessionStatus.COMPLETED, LocalDateTime.of(2026, 11, 16, 10, 0))
-            .copy(endedAtMillis = 1_763_300_000_000, durationMs = 61_000, cleanRepCount = 1, targetReps = 5)
-        val reps = listOf(rep(SetType.REFERENCE, 1, 1200, 2000), rep(SetType.EXERCISE, 1, 900, 1800))
+            .copy(endedAtMillis = 1_763_300_000_000, durationMs = 61_000, cleanRepCount = 1, targetReps = 5, setsPlanned = 2, setsCompleted = 2)
+        // Set 2 starts again at rep_index 1: only set_index tells it from the first rep of set 1.
+        val reps = listOf(
+            rep(SetType.REFERENCE, 1, 1200, 2000),
+            rep(SetType.EXERCISE, 1, 900, 1800),
+            rep(SetType.EXERCISE, 1, 850, 1700, setIndex = 2),
+        )
         val sessionJson = ExerciseJson.sessionToJson(s)
         val repsJson = ExerciseJson.repsToJson(reps)
+        assertEquals(listOf("1", "1", "2"), repsJson.map { (it as JsonObject).getValue("set_index").toString() })
         // Shape returned by get_exercise_sessions(): the session columns plus nested reps.
         val response = buildJsonObject {
             put("result", "ok")
@@ -116,6 +144,22 @@ class SessionDataTest {
         val back = parsed.sessions.single()
         assertEquals(s.copy(synced = true, updatedAtMillis = s.createdAtMillis), back.session)
         assertEquals(reps.map { it.copy(sessionId = s.id) }, back.reps)
+    }
+
+    /** A server (or a session) from before the sets migration has no set fields: it is one set. */
+    @Test
+    fun sessionJsonWithoutSetFieldsIsOneSet() {
+        val json = """{"result":"ok","sessions":[
+            {"id":"a","status":"completed","created_at":"2026-11-16T10:00:00Z","rep_count":2,
+             "reps":[{"set_type":"exercise","rep_index":1},{"set_type":"exercise","rep_index":2}]},
+            {"id":"b","status":"interrupted","created_at":"2026-11-16T11:00:00Z","reps":[]}]}"""
+        val parsed = ExerciseJson.sessions(Json.parseToJsonElement(json), "p1") as RemoteSessions.Ok
+        val (completed, interrupted) = parsed.sessions
+        assertEquals(1, completed.session.setsPlanned)
+        assertEquals(1, completed.session.setsCompleted)
+        assertEquals(listOf(1, 1), completed.reps.map { it.setIndex })
+        assertEquals(1, interrupted.session.setsPlanned)
+        assertEquals(0, interrupted.session.setsCompleted)
     }
 
     @Test

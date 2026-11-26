@@ -112,6 +112,21 @@ two pairing migrations. It only adds things and is safe to re-run. It adds:
 
 Removing a clinician (by either side) ends their access on the next read; the patient's sessions are not changed.
 
+**Sets.** Then run [migrations/20261126000000_exercise_sets.sql](./migrations/20261126000000_exercise_sets.sql)
+(safe to re-run, no row is dropped). A session is now 2 sets with a rest in between, and the firmware restarts
+`rep_index` at every START, so:
+
+- `exercise_reps.set_index` (1-based, `1` for existing rows and for the reference curl) joins the primary key:
+  `(session_id, set_type, set_index, rep_index)`.
+- `exercise_sessions.sets_planned` / `sets_completed`. `rep_count` and `clean_rep_count` are totals across sets;
+  existing sessions become one set, completed when the session was.
+- `save_exercise_session` and `get_exercise_sessions` write and return these fields. Reps come back ordered by set,
+  then rep.
+
+Apply it **before** installing an app build that records sets. Without it the previous `save_exercise_session`
+still answers `saved`, but it silently drops every rep of set 2 (same `rep_index` as set 1), and a saved session is
+never updated afterwards.
+
 **Checking the rules** (SQL editor, replace the UUIDs). Each `set` simulates a signed-in user:
 
 ```sql

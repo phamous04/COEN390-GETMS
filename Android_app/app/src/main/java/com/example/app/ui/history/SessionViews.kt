@@ -100,9 +100,21 @@ fun SessionListItem(data: SessionWithReps, onClick: () -> Unit) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Text(
-                    "${s.repCount} ${if (s.repCount == 1) "rep" else "reps"} · ${SessionMetrics.clock(s.durationMs)}",
+                    listOfNotNull(
+                        "${s.repCount} ${if (s.repCount == 1) "rep" else "reps"}",
+                        if (s.setsPlanned > 1) "${s.setsCompleted} of ${s.setsPlanned} sets" else null,
+                        SessionMetrics.clock(s.durationMs),
+                    ).joinToString(" · "),
                     style = MaterialTheme.typography.bodyMedium,
                 )
+                val sets = data.exerciseSets
+                if (sets.size > 1) {
+                    Text(
+                        sets.entries.joinToString(" · ") { (set, reps) -> "Set $set: ${reps.size} ${if (reps.size == 1) "rep" else "reps"}" },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
             Icon(ReBandIcons.ChevronRight, contentDescription = "Open session", tint = Teal)
         }
@@ -127,6 +139,7 @@ fun SessionDetailContent(data: SessionWithReps) {
             InfoRow("Healthy (reference) arm", armLabel(s.referenceArm))
             InfoRow("Repetitions", "${s.repCount}")
             InfoRow("Clean repetitions (passed form check)", "${s.cleanRepCount}")
+            if (s.setsPlanned > 1) InfoRow("Sets completed", "${s.setsCompleted} of ${s.setsPlanned}")
             if (s.targetReps > 0) InfoRow("Wearable set length", "${s.targetReps} reps")
             s.interruptionReason?.let {
                 Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
@@ -135,8 +148,32 @@ fun SessionDetailContent(data: SessionWithReps) {
     }
     ComparisonSection(data)
     RepetitionSection("Healthy-arm reference curl", listOfNotNull(data.referenceRep), emptyText = "No reference curl was saved.")
-    RepetitionSection("Exercising-arm repetitions", data.exerciseReps, emptyText = "No repetitions were counted.")
+    ExerciseSetSections(data)
     QualitySection(data)
+}
+
+/** The exercising-arm reps, one card per set (a single card for sessions recorded before sets existed). */
+@Composable
+private fun ExerciseSetSections(data: SessionWithReps) {
+    val sets = data.exerciseSets
+    val setCount = maxOf(data.session.setsPlanned, sets.keys.maxOrNull() ?: 0)
+    if (setCount <= 1) {
+        RepetitionSection("Exercising-arm repetitions", data.exerciseReps, emptyText = "No repetitions were counted.")
+        return
+    }
+    for (set in 1..setCount) {
+        val reps = sets[set].orEmpty()
+        val summary = SessionMetrics.summarize(reps)
+        RepetitionSection(
+            "Exercising arm · Set $set of $setCount",
+            reps,
+            emptyText = "No repetitions were recorded for this set.",
+            summary = if (reps.isEmpty()) null else {
+                "${summary.repCount} ${if (summary.repCount == 1) "rep" else "reps"} · ${summary.cleanCount} clean · " +
+                    "mean range ${SessionMetrics.format(summary.meanRomDeg, SessionMetrics.MetricUnit.DEGREES)}"
+            },
+        )
+    }
 }
 
 @Composable
@@ -154,7 +191,7 @@ fun ComparisonSection(data: SessionWithReps) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("Healthy Arm vs Exercising Arm", style = MaterialTheme.typography.titleMedium)
             Text(
-                "Healthy arm: the single reference curl. Exercising arm: average of all counted reps unless noted. " +
+                "Healthy arm: the single reference curl. Exercising arm: average of all counted reps of every set unless noted. " +
                     "These are measurements only, not a recovery score or diagnosis.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -195,10 +232,13 @@ fun ComparisonSection(data: SessionWithReps) {
 }
 
 @Composable
-fun RepetitionSection(title: String, reps: List<ExerciseRepEntity>, emptyText: String) {
+fun RepetitionSection(title: String, reps: List<ExerciseRepEntity>, emptyText: String, summary: String? = null) {
     ReBandCard {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text(title, style = MaterialTheme.typography.titleMedium)
+            summary?.let {
+                Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
             if (reps.isEmpty()) {
                 Text(emptyText, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }

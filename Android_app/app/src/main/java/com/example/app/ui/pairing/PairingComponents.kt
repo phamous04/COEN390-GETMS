@@ -196,9 +196,11 @@ fun ConfirmDialog(
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
     dismissLabel: String = "Cancel",
+    /** Tapping outside or pressing back. Pass an empty lambda when one of the two buttons must be chosen. */
+    onDismissRequest: () -> Unit = onDismiss,
 ) {
     AlertDialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = onDismissRequest,
         title = { Text(title) },
         text = { Text(text, style = MaterialTheme.typography.bodyLarge) },
         confirmButton = {
