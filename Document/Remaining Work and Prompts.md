@@ -1,330 +1,324 @@
-# GETMS — Remaining Work & Implementation Prompts
+# ReBand (GETMS) — Remaining Work & Implementation Prompts
 
-_Snapshot of `main` @ `4e174d9`. Branches `Matthew`, `Sara's-Branch`, `Eddy---BLE-App-Side` contain nothing beyond `main`._
-
----
-
-## 1. Where we are
-
-| Area | Status on `main` |
-|---|---|
-| BLE (app) | ✅ Scan / connect / MTU / notifications / START-STOP / packet parser + seq-gap metrics (`ble/`) |
-| Live debug screen | ✅ `BleSensorScreen` shows live EMG A/B + pitch traces (custom `Canvas`) |
-| Auth | ✅ Supabase email/password sign-in, sign-up, sign-out, session restore (`ProfileViewModel`) |
-| Local DB | ⚠️ Room `recordings` table exists, but **nothing ever inserts into it** |
-| Supabase backend | ⚠️ Only `profiles` table + private `recordings` bucket. No sessions/recordings/reps tables, no clinician RLS. App has **no Postgrest/Storage client** (only `auth-kt`) |
-| Navigation | ⚠️ Home → Sensor / History / Profile placeholders. No auth gate, no role routing |
-| Calibration | ❌ Not started (needed before the real exercise) |
-| Exercise flow, metrics, review, clinician view | ❌ Not started |
-| BLE disconnection handling | ⚠️ State goes to `DISCONNECTED` and streaming flag resets. No reconnect, no pause, no partial-data save |
-| Firmware | ❌ `main.c` only runs an EMG bench test. `ble.c`, `imu.c`, `emg.c` are **empty**, so the app has no real device to talk to |
-
-### Architectural blocker to fix first
-`SensorViewModel` creates its own `BleManager` and calls `close()` in `onCleared()`. The view model is
-scoped to the Sensor screen, so **navigating to any other screen drops the BLE connection**. A multi-screen
-exercise flow (placement → calibration → tutorial → sets → review) needs one app-wide BLE/session owner.
-
-### Root causes of the "no history after restart" bug
-1. No code path calls `RecordingDao.upsert(...)`, so Room stays empty.
-2. No remote tables or Postgrest/Storage dependency, so nothing is uploaded and there's nothing to download.
-3. Sign-out runs `clearAll()` (intended), but sign-in never pulls the user's history back from Supabase.
-4. `RecordingEntity` has no `userId`, and `HistoryScreen` only shows a count.
+_Reviewed against `main` @ `d1488ba`. All feature branches are merged into `main`._
 
 ---
 
-## 2. Remaining work (suggested order)
+## 1. What is already done
+
+| Area | Implemented | Where |
+|---|---|---|
+| Firmware | 2 IMUs (upper arm 0x69, forearm 0x68) + MyoWare EMG (ch A). Calibration, rep detection and form checks run **on the device**. BLE GATT server. Recording continues if BLE drops, with the last 32 reps replayable | `firmware/Reband/` (`exercise/session.c`, `reps.c`, `motion.c`), protocol in `firmware/Reband/BLE_PROTOCOL.md` |
+| BLE (app) | App-wide `BleManager` singleton: scan/connect, MTU, Status / Rep Event / EMG notifications, CALIBRATE / START / STOP / GET_STATE / GET_REPS | `ble/` |
+| Exercise flow | Choose the exercising arm → calibrate the healthy arm (relax / curl / MVC) → one reference curl → review → switch arm → calibrate the exercising arm → one set (firmware `TARGET_REPS = 5`) → save → summary | `ui/exercise/ExerciseViewModel.kt`, `ExerciseFlowScreen.kt` |
+| Metrics | Per rep from the firmware: ROM, duration, peak / mean %MVC, twist / swing / plane deviation, clean + quality flags. Healthy-vs-exercising comparison table | `data/SessionMetrics.kt`, `ui/history/SessionViews.kt` |
+| Local storage | Room v3: `exercise_sessions`, `exercise_reps`, `recordings` (raw EMG files with crash recovery + WorkManager upload) | `data/local/`, `data/RecordingManager.kt`, `Android_app/OFFLINE_RECORDINGS.md` |
+| Supabase | Pairing / invite codes, verified clinicians, sessions + reps via RPCs (`save_exercise_session`, `get_exercise_sessions`), raw files in Storage (a clinician can read an assigned patient's folder) | `supabase/migrations/*` |
+| Patient UI | Login / sign-up, Home with weekly activity, History list + session detail, Settings, device scan, My Clinician | `navigation/AppNavHost.kt`, `ui/screens`, `ui/history`, `ui/pairing` |
+| Clinician UI | Dashboard, patients, invite code, requests, patient → sessions → session detail (read-only, from the server) | `ui/pairing/Clinician*` |
+| Disconnects (partial) | Banner + "Reconnect wearable" (manual, through the scanner), GET_REPS replay after reconnect, "End session now" → saved as interrupted, command timeouts, reps written to Room as they arrive, an `in_progress` session left from a previous run → `interrupted` on next launch | `ExerciseViewModel.onConnectionLost`, `onStatus`, `finish` |
+
+## 2. Gaps found in the requested items
+
+| Requested | Current state | Gap |
+|---|---|---|
+| 2 sets × 5 reps after calibration | One set of 5 (firmware `TARGET_REPS`) | No set loop or rest. **`rep_index` restarts at every START**, but the rep primary key is `(session, set_type, rep_index)` in both Room and Supabase, so set 2 would overwrite set 1 |
+| Intro: what data is analyzed | Setup card only says "one reference curl, then your set" | No explanation of the metrics |
+| SVG placement (EMG, IMUs, strap) | Text-only `SwitchArmStep`. `res/drawable` has only launcher icons | No artwork, no placement step before the first calibration |
+| 2-frame tutorial → "I'm ready" | None | New step |
+| Average effort ("force") graph, velocity, stability | Table of averages only, no charts. The raw EMG stream is saved to a file for the exercising set only, **not for the reference curl**, and never analyzed in the app | EMG curve per rep, velocity, stability score, chart with the reference arm in grey |
+| Patient-friendly end review | `SummaryStep` reuses the technical `SessionDetailContent` (same as the clinician view) | Simple patient view |
+| Doctor detailed data | Same table + per-rep list | Per-set breakdown, charts, trends across sessions, raw EMG viewer, export |
+| History after restart | Room + `restoreFromServer` exist | Bugs listed in P6 |
+| BLE safety net | Partial (see above) | No auto-reconnect, no foreground service (raw capture stops when the app is backgrounded), no resume after a device power-off, no recovery after an app kill |
+
+## 3. Suggested order
 
 | # | Item | Depends on |
 |---|---|---|
-| P0 | App-wide BLE/session owner + calibration (prerequisite) | — |
-| P1 | Data layer: Room schema + Supabase schema + sync (**fixes history bug**) | — |
-| P2 | Exercise entry: intro, SVG placement guide, 2-frame tutorial, "I'm ready" | P0 |
-| P3 | Real exercise: 2 sets × 5 reps with live rep counter + rest between sets | P0, P2 |
-| P4 | BLE disconnection safety net | P0, P1, P3 |
-| P5 | Exercise analysis: effort (force-proxy) curve, velocity, stability + comparison chart | P3 |
-| P6 | End-of-exercise review (patient-friendly) | P1, P5 |
-| P7 | Clinician detailed view | P1, P5 |
+| P6 | Fix history persistence / sync | — |
+| P1 | 2 sets × 5 reps (incl. DB + Supabase migration) | — |
+| P2 | Intro + placement SVGs + tutorial | — |
+| P7 | BLE disconnection safety net | P1 |
+| P3 | Analysis: effort curve, velocity, stability + comparison chart | P1 |
+| P4 | Patient-friendly review | P3 |
+| P5 | Clinician detailed view | P3 |
 
 **Target patient flow**
-
 ```text
-Home → Select exercise → Intro (what we measure) → Placement guide (SVG: electrodes, IMU, strap)
-     → Connect → Calibration → Tutorial (2-frame animation) → [I'm ready]
-     → Set 1 (5 reps) → Rest → Set 2 (5 reps) → Processing → Review → Saved/synced
+Setup (choose arm + "what we measure") → Placement (SVG, healthy arm) → Calibrate healthy arm
+→ Tutorial (2 frames) → [I'm ready] → Reference curl → Review → Switch arm (placement SVG, mirrored)
+→ Calibrate exercising arm → Set 1 (5 reps) → Rest → Set 2 (5 reps) → Saving → Patient review
 ```
 
-### Decisions the team should confirm
-1. **Reference arm.** The grey "correct arm" line needs data from the unaffected arm. Do we record both arms
-   every session (design doc §6.3), or record a baseline of the unaffected arm once and reuse it?
-   The prompts below assume both arms per session, falling back to the latest unaffected recording.
-2. **"Force"** EMG measures muscle *activation* (%MVC), not force. The UI should call it **"Muscle effort"**,
-   and the report should describe it as a force proxy.
-3. **Charts.** The design doc says Vico, but we already draw with a custom `Canvas`. The prompts reuse `Canvas` to avoid a new dependency.
-4. **Design doc drift.** The doc says Firebase, but we use Supabase + Room. It also says minSdk 26, but the app is set to 24. Update §6.1, §10, and §11.
+### Decisions to confirm
+1. **"Force"**: The MyoWare ENV signal measures muscle *activation*, not force. The UI should call it **"Muscle effort (%MVC)"**.
+2. **Velocity curve**: The firmware does not stream the elbow angle (the IMU characteristic is reserved). Without a firmware change, velocity is a per-rep average (2·ROM / duration). A velocity *curve* and smoothness need the optional firmware change in P3.
+3. **Rest between sets**: 30 s, with skip allowed. Set 2 reuses the calibration if the device is still calibrated.
+4. **Reference** is one healthy-arm curl, as today. The grey line is that curl's curve.
 
 ---
 
-## 3. Implementation prompts
+## 4. Implementation prompts
 
-Every prompt assumes this context. Paste it before the specific prompt:
+Paste this shared context before each prompt:
 
-> **Shared context:** Android app in `Android_app/` (Kotlin, Jetpack Compose Material3, single activity,
-> Navigation Compose in `navigation/AppNavHost.kt`, `AndroidViewModel` + `StateFlow`, Room in `data/local`,
-> Supabase-kt in `data/remote`, no DI framework). BLE is in `ble/` (`BleManager`, `PacketParser`, models in
-> `BleModels.kt`). EMG: 2 channels @ 1000 Hz (A = anterior deltoid, B = posterior deltoid), 20 samples/packet.
-> IMU: quaternions @ 100 Hz, 5 samples/packet. Exercise = shoulder flexion (arm raise). Follow existing code
-> style, keep changes focused, add unit tests for pure logic, and make sure `./gradlew testDebugUnitTest assembleDebug` passes.
-> Reference: `Document/Final Design Doc.md` §6–§8.
+> **Shared context:** ReBand upper-limb rehab app. The exercise is a **bicep curl**. Android app in `Android_app/`
+> (Kotlin, Compose Material3, `AndroidViewModel` + `StateFlow`, Room v3 in `data/local`, Supabase-kt with RPCs in
+> `data/remote`, theme color `Teal` in `ui/theme/Color.kt`). The wearable does calibration, rep detection and
+> form checks on-device. The protocol is in `firmware/Reband/BLE_PROTOCOL.md`: Status (18 B), Rep Event (19 B: ROM, duration,
+> peak/mean %MVC, twist/swing/plane, flags), EMG (MyoWare ENV, ch A in mV, 1 kHz, `t0_us` since START), and
+> commands CALIBRATE(1..3) / START / STOP / GET_STATE / GET_REPS. `rep_index`, `seq` and `t0_us` restart at every START.
+> The flow lives in `ui/exercise/ExerciseViewModel.kt` (`FlowStep` state machine, one command in flight via `Pending`)
+> and `ExerciseFlowScreen.kt`. Sessions/reps are persisted through `data/ExerciseSessionRepository.kt` and uploaded with
+> `save_exercise_session` (`supabase/migrations/20261118000000_exercise_sessions.sql`). Raw EMG goes through
+> `data/RecordingManager.kt` (see `Android_app/OFFLINE_RECORDINGS.md`). Follow the existing style, add new Supabase
+> changes as a new migration file, export the Room schema, add focused unit tests, and run
+> `.\gradlew.bat :app:testDebugUnitTest :app:assembleDebug` from `Android_app/`.
 
-### P0 — App-wide session owner + calibration (prerequisite)
+### P1 — 2 sets × 5 reps
 
 ```text
-Goal: Make the BLE connection survive navigation, then add per-limb calibration.
+Goal: After the exercising arm is calibrated, the patient does 2 sets of 5 reps with a rest in between.
 
-1. Move BleManager ownership out of SensorViewModel into an app-scoped singleton (e.g. a
-   `GetmsApp : Application` holding `bleManager` and a new `ExerciseSessionController`), registered in
-   AndroidManifest. SensorViewModel and all new screens read from it; only an explicit "Disconnect" or
-   app shutdown closes BLE. Remove `bleManager.close()` from SensorViewModel.onCleared.
-2. Create `session/ExerciseSessionController` holding a StateFlow<SessionState> state machine:
-   Idle → Intro → Placement → Connect → Calibrating → Tutorial → Ready → InSet(setIndex) → RestBetweenSets
-   → Processing → Review → Done, plus Interrupted (used by P4). Pure Kotlin, unit-testable.
-3. Calibration screen (design doc §6.4): 5 s rest → 3 × 3 s maximum contraction (MVC) → 3 s neutral pose
-   (arm relaxed at side). Show a countdown, a progress bar, and simple instructions for each step. Compute and store a
-   `Calibration(restMean[2], restSd[2], mvcPeak[2], q0: Quaternion)`:
-   - EMG envelope = RMS over 100 ms windows of the raw samples. restMean/restSd come from the rest window,
-     and mvcPeak = max envelope over the 3 MVC trials, per channel.
-   - q0 = normalized average quaternion of the neutral-pose window.
-   Reject the calibration with a clear retry message if the IMU moves > 5°/s during rest or neutral pose, or if
-   mvcPeak < 3 × restMean on either channel (electrode problem).
-4. Angle: add `relativeFlexionDeg(q, q0)` using q_rel = q0⁻¹ ⊗ q (§7.1) instead of the absolute pitch.
-Tests: envelope RMS on a synthetic sine, calibration rejection rules, q_rel = identity when q == q0.
-Done when: you can connect on the Sensor screen, navigate to calibration and back, and the stream never drops.
+1. Data model (do this first; today set 2 would overwrite set 1 because rep_index restarts at each START):
+   - Room v4: add `setIndex INTEGER NOT NULL DEFAULT 1` to `exercise_reps`, change the PK to
+     (sessionId, setType, setIndex, repIndex), and add `setsPlanned` / `setsCompleted` to `exercise_sessions`.
+     Write an explicit Migration(3,4) that keeps all rows (SQLite needs a table rebuild to change a PK), add it to
+     ALL_MIGRATIONS, export 4.json, and extend the migration androidTest.
+   - Supabase: new migration `2026112x_exercise_sets.sql`. Add `set_index int not null default 1` to
+     `exercise_reps`, change the PK to (session_id, set_type, set_index, rep_index), and add
+     `sets_planned` / `sets_completed` to `exercise_sessions`. Update `save_exercise_session` and
+     `get_exercise_sessions` to read and write them. Update `ExerciseJson` and `SessionDataTest`.
+2. Flow (ExerciseViewModel):
+   - State: `currentSet` (1..2), `setsPlanned = 2` (constant for now). Add FlowStep `REST_BETWEEN_SETS`.
+   - Device STOPPED after set 1 (target reached or the user pressed Stop) → run the GET_REPS gap recovery for that
+     set *before* the next START, because the device ring only holds reps since the last START → REST
+     (30 s countdown, "Skip rest") → send START again. START is allowed from STOPPED while calibrated, so
+     no recalibration is needed. If the device is not READY/STOPPED, go to EXERCISE_CALIBRATION.
+   - Reset `lastExerciseRepIndex`, `exerciseRepsStored`, and the EMG seq counters for each set.
+     Store reps with `setIndex = currentSet`.
+   - Stop pressed early in set 1 → dialog "Continue to set 2" / "End session".
+   - Finish after set 2. `repCount` / `cleanRepCount` are totals across sets.
+   - Raw EMG: one RecordingManager capture per set (pass `sessionId`, and put the set in the `exercise` label or a new
+     header field).
+3. UI: "Set 1 of 2" above RepetitionCounter. Rest screen with a big countdown and "Next: Set 2 · 5 reps".
+   Session detail and history group the reps by set.
+Tests: the Migration(3,4) keeps rows; the set-2 rep 1 does not overwrite the set-1 rep 1 (DAO); JSON round-trip with set_index;
+ViewModel set transition (if practical with a fake BleManager, otherwise extract a pure reducer).
 ```
 
-### P1 — Fix local + Supabase storage (history survives restart)
+### P2 — Exercise intro, SVG placement guide, 2-frame tutorial
 
 ```text
-Goal: The patient sees their full exercise history after an app restart, a reinstall, or a sign-out/sign-in.
-Room is the single source of truth for the UI, and Supabase is the durable copy.
+Goal: Before recording, the patient learns what is measured, how to wear the device, and what the movement looks like.
 
-Current bugs: nothing inserts into Room. Supabase has only `profiles` + bucket `recordings`. The app only
-depends on supabase `auth-kt`. Sign-out wipes Room (keep that), but sign-in never pulls remote data.
-
-1. Supabase (`supabase/setup.sql`, keep idempotent, add a new section, and update supabase/README.md):
-   - `profiles`: add `clinician_id uuid null references profiles(id)` and `affected_side text check (left|right)`.
-   - `invites(code text pk, clinician_id uuid)`, readable by authenticated users via a single-row lookup.
-   - `exercise_sessions(id uuid pk, user_id, clinician_id, exercise_id text, started_at, ended_at,
-     status text check (in_progress|complete|interrupted), sets_planned int, reps_per_set int)`.
-   - `recordings(id uuid pk, session_id fk, user_id, clinician_id, limb text (affected|unaffected),
-     side text, started_at, ended_at, calibration jsonb, metrics jsonb, raw_trace_path text,
-     raw_trace_status text (pending|uploaded), app_version, fw_version)`.
-   - `reps(recording_id fk, set_index int, rep_index int, metrics jsonb, primary key(recording_id,set_index,rep_index))`.
-   - RLS: the patient can select/insert/update their own rows (`user_id = auth.uid()`). The clinician can SELECT
-     rows where `clinician_id = auth.uid()`. Add a storage SELECT policy so the linked clinician can read the
-     patient's folder. Add the index `(user_id, exercise_id, started_at)`.
-2. Android deps (libs.versions.toml + app/build.gradle.kts): supabase `postgrest-kt`, `storage-kt`,
-   kotlinx-serialization plugin + json, `androidx.work:work-runtime-ktx`.
-3. Room: version 2 with an explicit Migration(1,2). **No destructive fallback**, because it would wipe history.
-   Entities: SessionEntity, RecordingEntity (+ userId, sessionId, limb, metricsJson, calibrationJson,
-   rawTracePath, syncState: PENDING|SYNCED|FAILED, updatedAt), RepEntity. DAOs filter by userId.
-4. Repository `data/HistoryRepository`:
-   - `saveLocal(...)` writes Room in one transaction, then enqueues a unique WorkManager `SyncWorker`
-     (NetworkType.CONNECTED, exponential backoff).
-   - `SyncWorker` upserts PENDING rows to Postgrest, uploads the raw trace file to
-     `recordings/<uid>/<sessionId>/<recordingId>.bin`, and marks rows SYNCED.
-   - `pullRemote(userId)` runs after sign-in and on app start when signed in. It fetches sessions, recordings,
-     and reps, then upserts them into Room without overwriting local PENDING rows.
-5. HistoryScreen: list sessions by date with the exercise name, the reps done, and a sync chip
-   (Synced / Waiting for network / Failed - retry). Include empty and loading states. Tapping a session opens the review (P6).
-Tests: migration test (Room MigrationTestHelper), DAO user filtering, and a pull-merge rule that never
-overwrites PENDING.
-Done when: you record → kill the app → reopen and history is there; you sign out → sign in and history is restored
-from Supabase; you record offline → go online and it syncs automatically.
+1. Intro (extend SetupStep): "Bicep Curl · 2 sets × 5 reps · ~5 min" plus three plain cards:
+   "Muscle effort" (EMG sensor on the biceps), "Speed" (how fast you curl), "Stability" (how steady
+   and in-line your arm stays). Keep the arm selection below.
+2. Placement step (new FlowStep.PLACEMENT, after SETUP and before REFERENCE_CALIBRATION; reuse the same
+   composable inside SWITCH_ARM for the exercising arm). Create vector artwork. Author it as SVG in
+   `Android_app/art/` and convert it to VectorDrawable XML in `res/drawable/` with Android Studio > Vector Asset:
+   - `placement_emg.xml`: MyoWare sensor on the belly of the biceps, electrodes in line with the muscle fibers,
+     and the reference electrode placed as the MyoWare guide recommends.
+   - `placement_imu.xml`: upper-arm IMU just above the elbow and forearm IMU just below the elbow, both facing
+     the same way on each arm (the firmware checks the hinge axis).
+   - `placement_strap.xml`: straps snug, not tight, with cables not pulling on the sensors.
+   Show them as a 3-page pager (HorizontalPager) with a caption and dots, plus "Back/Next" and "Done, calibrate".
+   Mirror the art for the left arm with Modifier.graphicsLayer(scaleX = -1f). Tint with theme colors
+   (dark mode), and add contentDescriptions. Ask a teammate to check the art against the real hardware.
+3. Tutorial step (new FlowStep.TUTORIAL, after the healthy-arm calibration completes and before REFERENCE_RECORD):
+   `tutorial_curl_down.xml` (arm straight, elbow at side) and `tutorial_curl_up.xml` (fully curled),
+   alternated every ~1 s with Crossfade driven by a LaunchedEffect loop. Caption: "Curl all the way up, then
+   lower slowly. Keep your elbow by your side." Big "I'm ready" button → REFERENCE_RECORD. If the system
+   animator scale is 0, show both frames side by side. Before the exercising-arm sets, READY shows a
+   small replay of the same animation.
+4. Update `restartCalibration` / `cancelFlow` / the back handling in ExerciseFlowScreen for the new steps.
+Done when: the full path works with Back navigation, the BLE connection stays up, and the existing flow behavior is unchanged.
 ```
 
-### P2 — Enter exercise: intro, placement SVG, tutorial animation
+### P3 — Analysis: effort curve, velocity, stability + comparison chart
 
 ```text
-Goal: Before recording, the patient learns what's measured, how to put the sensors on, and what the movement looks like.
+Goal: After each set, compute per-rep and per-set analysis and draw the exercising arm against the healthy
+reference: exercising arm in the main color (Teal), healthy arm as a grey line on a grey background.
 
-1. Exercise intro screen: exercise name, 2 sets × 5 reps, an estimated duration, and three plain-language cards
-   for what we measure: "Muscle effort" (EMG), "Speed of movement", "Stability/smoothness". Include a "Next" button.
-2. Placement guide screen. Create vector art as Android VectorDrawables in res/drawable. Author them as SVG,
-   then import them through Android Studio Vector Asset, or write the XML directly:
-   - `placement_emg.xml`: upper arm with Ch A electrodes on the anterior deltoid, Ch B on the posterior deltoid,
-     and the reference electrode on a bony landmark (elbow/acromion), labelled A / B / REF.
-   - `placement_imu.xml`: the IMU box on the lateral upper arm with an arrow showing the x-axis along the humerus.
-   - `placement_strap.xml`: the elastic strap holding the unit, snug but not tight.
-   Show them as a 3-step pager with a short caption each, "Back/Next", and step dots. The side shown
-   (left/right) mirrors the arm being tested, using `Modifier.graphicsLayer(scaleX = -1f)`.
-   All art must use theme colors (tint), work in dark mode, and have contentDescription text.
-3. Then go to Connect (reuse the existing scan/connect UI if not connected) → Calibration (P0).
-4. Tutorial screen after calibration: a 2-frame animation of the arm raise, made of two vector drawables
-   (`tutorial_arm_down.xml`, `tutorial_arm_up.xml`) alternated every ~1 s with `Crossfade` driven by a
-   `LaunchedEffect` loop. Add a caption like "Raise your arm forward to shoulder height, then lower slowly" and a large
-   "I'm ready" button that starts Set 1 (P3). Respect the system "remove animations" setting by showing both frames side by side.
-Done when: the full path Intro → Placement (3 steps) → Connect → Calibration → Tutorial → Ready works with Back
-navigation and keeps the BLE connection alive.
+Inputs: Rep Events (start_ms, duration_ms, ROM, %MVC, twist/swing/plane, flags), the EMG ENV stream
+(ch A mV, 1 kHz, t0_us since START), and calibration baseline_mv / mvc_mv per arm.
+
+1. Capture: keep an in-memory buffer of (t_us, chA) per set in ExerciseViewModel. At 1 kHz × ~60 s that is fine.
+   **Also capture EMG during the reference curl** (today RecordingManager only runs for the exercising set).
+   Start the reference raw capture as well so the clinician has it.
+2. New pure module `data/analysis/` (unit-testable, runs on Dispatchers.Default):
+   - %MVC(t) = clamp((env − baseline) / (mvc − baseline) × 100, 0, 150), smoothed with a 100 ms moving average.
+   - Per rep: slice [start_ms, start_ms + duration_ms] (t_us/1000 since START), resample to 101 points (0–100 % of
+     the movement). Per set: ensemble mean ± SD over the reps. Reference: the single reference curl's curve.
+   - Velocity: mean angular velocity per rep = 2·ROM / duration (°/s; up + down) and tempo (duration).
+     Optional, needs firmware: stream the elbow angle on the reserved IMU characteristic 6e400002 while RECORDING
+     (`seq u16 | t0_us u32 | 10 × angle_x10 i16`, 100 Hz), update BLE_PROTOCOL.md + PacketParser, then add
+     peak velocity, a velocity curve and smoothness (SPARC or number of velocity peaks).
+   - Stability score 0–100 per rep and per set. Form penalties: twist/30°, swing/15°, plane/25° (the firmware
+     FORM_MAX limits), each capped at 1. Consistency: CV of ROM and of duration across the set's reps. Also use
+     the clean-rep ratio. Document the weights in KDoc and keep the components for clinicians.
+   - Fatigue hint: set 2 vs set 1 change in mean ROM, duration and mean %MVC.
+3. Persist: the 101-point curves (mean, SD, reference) + stability/velocity per set. Add a Room table
+   `exercise_set_analysis` (sessionId, setType, setIndex, json) in a v5 migration, or a JSON column. Store them in
+   Supabase as jsonb through save/get_exercise_sessions (new migration). Recompute is not possible
+   later without the raw file, so store them.
+4. `ui/components/ComparisonChart.kt` (Canvas, no new dependency): `surfaceVariant` background,
+   reference line `onSurfaceVariant` at 50 % alpha drawn first, ±SD band in Teal at 15 % alpha, exercising line in
+   Teal 2.5 dp on top, labelled axes ("% of movement", "% MVC"), legend "Left arm (today)" / "Right arm
+   (healthy)", and a semantics contentDescription summarising the peak values. Reuse it for any curve.
+Tests: a synthetic ENV signal gives the expected %MVC; the resample length is 101; mean/SD of identical reps → SD 0;
+stability = 100 for perfect reps and decreases with twist/CV; mean velocity formula.
 ```
 
-### P3 — Real exercise: 2 sets × 5 reps
+### P4 — Patient-friendly end-of-exercise review
 
 ```text
-Goal: Record the actual exercise after calibration, with live feedback.
+Goal: Replace the technical SummaryStep content with a simple, encouraging review. The current
+SessionDetailContent becomes the clinician view (P5).
 
-1. Live rep counter (`processing/realtime/RepCounter`): a causal low-pass (2nd-order Butterworth 6 Hz, or a
-   one-euro filter) on the relative flexion angle from P0. A rep is counted when the angle rises above
-   `startThreshold + minPeakProminenceDeg (20°)` and then returns below `startThreshold + 10°`, with ≥ 1.0 s
-   between reps. Emit rep boundaries (start/peak/end sample timestamps). Latency must be ≤ 300 ms after the peak.
-2. Exercise screen: big "Set 1 of 2", a rep counter "3 / 5", a live angle trace with a target band, and a
-   "Stop" button. After 5 reps, auto-end the set → 30 s rest countdown (skippable) → Set 2 → Processing.
-3. Recording buffer: for the recording, store every EMG and IMU packet exactly as received plus the rep
-   boundaries and set index. Append to a file in `filesDir/raw/<sessionId>/<recordingId>.bin` while
-   recording (one JSON header line with rates, scales, calibration, and fw/app version, then the packets). Flush
-   every ~2 s, which P4 relies on.
-4. On completion, save it through HistoryRepository (P1) with status complete and trigger the analysis (P5).
-5. If both arms are recorded per session (team decision), after the first arm show an "arm switch" step:
-   move the strap (show the placement SVGs again) → recalibrate → tutorial skipped → sets.
-Tests: RepCounter on synthetic sinusoidal angle data (exactly 5 reps, noise robustness, no double-count at the peak).
-Done when: 2 × 5 reps on the device produce exactly 10 detected reps and a raw file + Room rows.
+New `ui/history/PatientSessionReview.kt`, used by SummaryStep and by the patient History detail route:
+1. Header: "Great work!", the date, and "10 / 10 reps · 2 sets". Show an interrupted banner if status = interrupted
+   ("We saved 7 reps before the wearable disconnected").
+2. Three big cards (value + plain sentence + icon + a color that is never the only signal):
+   - Range: "You curled 118° — 92 % of your healthy arm" (+ "↑ 6° since last session" if a previous session exists).
+   - Speed: "Steady pace · 2.4 s per rep" ("a bit fast" / "a bit slow" relative to the reference curl).
+   - Stability: "Stability 81/100 — elbow stayed steady" (name the main issue if one exists: "try not to swing your upper arm").
+3. "Muscle effort" ComparisonChart (P3): today's average curve vs the healthy arm in grey, with one sentence.
+4. Set 1 vs Set 2: a small two-column comparison plus a fatigue hint if it applies.
+5. Sync chip (Saved on phone / Synced) and buttons "Done" and "See details" (expands the existing technical view).
+No jargon: no %MVC, no "plane deviation", no flags in the main view. Keep the existing "measurements, not a
+diagnosis" note. Use large text, 48 dp targets and TalkBack labels. If there is no reference curve (older sessions), hide the chart.
 ```
 
-### P4 — BLE disconnection safety net
+### P5 — Clinician detailed view
 
 ```text
-Goal: A device power-off, a dead battery, Bluetooth being turned off, moving out of range, or the app being
-killed during an exercise never loses completed reps and never leaves the user stuck.
+Goal: An assigned, verified clinician can inspect everything about a patient's sessions. The view stays read-only, and
+the server checks access on every call (existing behaviour in ClinicianHistoryViewModel).
 
-1. Detection, in ExerciseSessionController: ConnectionState → DISCONNECTED, **or** no EMG/IMU packet for
-   > 1 s while in a set (watchdog), **or** BluetoothAdapter ACTION_STATE_CHANGED → OFF.
-2. On detection: freeze the set (stop the rep counter, keep completed reps, discard the partial rep), flush
-   the raw file, set the session state to Interrupted, and show a non-dismissable dialog: "Sensor disconnected - check
-   it's on and nearby" with a live reconnect status.
-3. Auto-reconnect to the last device address (persist it in DataStore or SharedPreferences) with backoff
-   1 s, 2 s, 4 s… up to 30 s total. On success, re-enable notifications, send START, and offer
-   "Resume set (n reps left)" / "Restart set". If the strap may have moved (more than 2 min disconnected), require recalibration.
-4. Give up after 30 s: offer "Save what I did" (status interrupted, partial metrics) or "Discard".
-   Never silently drop data.
-5. App killed or crashed mid-session: on the next launch, detect an `exercise_sessions` row with status
-   in_progress, then offer "Resume / Save partial / Discard".
-6. Run recording in a foreground service (`foregroundServiceType="connectedDevice"`, notification
-   "Recording exercise…") so a screen-off or app switch doesn't kill it. Add the FOREGROUND_SERVICE,
-   FOREGROUND_SERVICE_CONNECTED_DEVICE and POST_NOTIFICATIONS (API 33+) permissions.
-7. Log every interruption (time, duration, cause, packets lost) into the recording metadata so the clinician
-   can see it.
-Tests: a controller unit test with a fake BLE flow: packets stop → Interrupted → reconnect → resume keeps
-the rep count, and timeout → save partial.
-Done when: you unplug the ESP32 mid-set → the dialog appears ≤ 1.5 s → plug it back in → resume, and the final rep count is correct.
+Build on the existing clinician routes (CLINICIAN_PATIENT, CLINICIAN_SESSION) and SessionDetailContent:
+1. Patient detail: trends across sessions (Canvas line charts): ROM as % of the healthy arm, mean %MVC,
+   mean velocity, stability score, clean-rep ratio, plus the number of sessions per week.
+2. Session detail, per set:
+   - Set table: reps, clean reps, mean/SD ROM, duration, velocity, peak/mean %MVC, stability with its components
+     (twist, swing, plane, CV), and the set 1 → set 2 change.
+   - Per-rep rows (existing RepRow) plus velocity and flags.
+   - ComparisonChart with the ±SD band for each set and the reference curve.
+   - The calibration values of both arms, firmware version, error flags, packet loss and interruption reason (already
+     available; keep them).
+3. Raw EMG viewer: the server currently has no recordings table, so the clinician cannot find which Storage
+   file belongs to a session. Add `raw_recording_ids text[]` (or a small `session_recordings` table) to the
+   session upload. Download `<patient>/<uuid>.getms` on demand (the storage policy
+   `recordings_select_assigned_clinician` already allows it), parse it with a reader shared with RecordingFileStore,
+   and plot the %MVC envelope over time with rep start/end markers and set separators. Support pinch-zoom/pan.
+   Cache it in cacheDir only.
+4. "Export CSV" (per-rep metrics of a session or of all sessions) through FileProvider + the share sheet.
+Tests: CSV formatting, .getms reader on a sample file, and a JSON mapping test for the new fields.
 ```
 
-### P5 — Exercise analysis (effort, velocity, stability) + comparison chart
+### P6 — Fix local + Supabase storage (history missing after restart / re-login)
 
 ```text
-Goal: Turn a finished recording into per-rep and per-set metrics plus an averaged movement profile,
-compared against the reference (unaffected/"correct") arm.
+Goal: A patient always sees their full session history after an app restart, sign-out/sign-in, reinstall,
+or a period offline. First reproduce each scenario on a device, then fix every cause you confirm.
 
-Pure-Kotlin module `processing/features/`, runs on Dispatchers.Default, ≤ 3 s for a recording.
-1. Signals: zero-phase 4th-order Butterworth 6 Hz on the angle (forward-backward). Velocity and
-   acceleration come from central differences. The EMG envelope is 100 ms RMS, normalized to %MVC with the calibration.
-2. Per rep: ROM (°), peak and mean angular velocity (°/s), rep duration (s), mean %MVC Ch A (muscle effort),
-   CCI between A and B, and smoothness (SPARC on the speed profile, or the number of velocity peaks as a fallback).
-   Steadiness = RMS (°) of the angle minus its 1 Hz low-pass during the rep (tremor/shake).
-3. Per set and per recording: the mean of the per-rep metrics, CV of ROM and peak velocity (consistency),
-   reps done/planned, and a fatigue indicator (EMG median-frequency slope across reps, optional).
-4. Stability score 0–100 for patients: combine steadiness, smoothness, and consistency with documented
-   weights. Keep the raw components for clinicians.
-5. Averaged effort curve ("average force graph"): time-normalize each rep to 0–100 % of the movement
-   (101 points), then compute the ensemble mean and SD of %MVC. Do the same for the angle and velocity.
-6. Asymmetry vs the reference arm: AI = |aff − unaff| / ((|aff| + |unaff|)/2) × 100, plus "% of healthy arm"
-   = aff/unaff × 100 for patient wording. The reference is the unaffected-arm recording from the same session,
-   or else the latest one for this exercise.
-7. Reusable composable `ComparisonChart(current, reference, band?, yLabel)` on `Canvas`:
-   the current arm in `MaterialTheme.colorScheme.primary` (2.5 dp, on top), the reference arm as a
-   grey line (`onSurfaceVariant` at ~50 % alpha, behind), an optional ±SD band in the primary color at 15 % alpha, a grey
-   chart background (`surfaceVariant`), axis labels, and a legend "Your [left] arm" / "Your [right] arm (reference)".
-   Show it for Effort (%MVC), Angle (°), and Velocity (°/s) vs "% of movement".
-8. Store metrics JSON in Room/Supabase (P1 schema), along with the averaged curves (101 points each, small).
-Tests: ROM/velocity on a synthetic sine of known amplitude and frequency, SPARC is smoother for a minimum-jerk
-profile than for a noisy one, AI edge cases (both 0 → 0), and time-normalization length = 101.
+Suspects found in code review:
+1. **Confirmed: same-process re-login skips the restore.** In AppNavHost.MainNavHost, `HistoryViewModel` /
+   `ExerciseViewModel` are created with `viewModel(key = "history-$patientId")` at activity scope, so they
+   survive sign-out. `HistoryViewModel.bind()` returns early when the id is unchanged, so after
+   sign-out (which runs `clearSyncedLocalCopies()`) → sign-in as the same user, `restoreFromServer` never runs
+   and synced sessions disappear until the process dies. Fix: trigger restore + sync on every transition to
+   Authenticated (e.g. in AuthViewModel or RecordingServices, collecting `sessionStatus` in an app scope), not
+   only on ViewModel creation.
+2. `restoreFromServer` swallows every error and runs once. There's no UI state and no retry. Expose
+   `RestoreState(Loading/Done/Failed)`, show "Couldn't load older sessions — Retry" in History, and add pull-to-refresh.
+3. Reps are only restored when the session row was newly inserted. Always `insertReps` (IGNORE) so a session
+   saved without reps gets them back.
+4. Session uploads only retry at bind, finish and sign-out. Add a unique WorkManager job (CONNECTED constraint, exponential
+   backoff) that runs `syncPending`, like RecordingUploadWorker. Show the per-session `synced` state in the history list
+   ("Saved on phone" vs "Synced").
+5. Server not migrated: if `save_exercise_session` / `get_exercise_sessions` are missing, uploads fail silently
+   (Log.w only), so nothing can be restored after a reinstall. Surface the failure (Settings: "Sync status · last
+   error · Sync now") and document in supabase/README.md that all files in supabase/migrations must be applied in order.
+6. `HistoryViewModel.session(id)` returns `flowOf(null)` if called before `bind` (e.g. state restored into the
+   detail route), which shows "Session not found". Make it `patientId.filterNotNull().flatMapLatest { … }`.
+7. Raw sensor recordings (`recordings` table) are never restored after a reinstall: by design there is no
+   server table. Either say so in the UI or list them from Storage.
+Tests (Robolectric/instrumented where needed): sign-out → sign-in with the same user restores synced sessions;
+restore adds missing reps; failed upload retried by the worker; session(id) before bind emits once bound.
+Manual checklist: record → force-stop → reopen; record offline → reconnect network; sign-out/in; uninstall/reinstall.
 ```
 
-### P6 — End-of-exercise review (patient-friendly)
+### P7 — BLE disconnection safety net
 
 ```text
-Goal: After processing, show a simple, encouraging summary with no jargon (no "SPARC", "%MVC", "CCI").
+Goal: The wearable being turned off, a dead battery, phone Bluetooth turned off, the device going out of range, the
+app being backgrounded, or the app being killed during calibration or a set must never lose recorded reps or leave the user stuck.
 
-Screen `ReviewScreen(sessionId)`, also reachable from History:
-1. Header: "Great job!", the exercise, the date, and "10 / 10 reps".
-2. Three big cards with a value, a plain label, a traffic-light or star rating, and the change vs the last session (↑/↓):
-   - Range of motion: "You raised your arm 82° (↑ 5° since last time)"
-   - Speed: "Average speed 64°/s" + "steady pace" / "a bit rushed" based on the CV
-   - Stability: "Stability 78/100 - smooth movement"
-3. "Compared with your other arm": one line like "Your left arm reached 85 % of your right arm's range",
-   plus the ComparisonChart (P5) for effort, with a toggle for Angle / Speed.
-4. Set 1 vs Set 2 mini comparison (a fatigue hint, e.g. "Set 2 was slower, normal when muscles tire").
-5. Sync status chip + "Done" (back to Home). If interrupted (P4), show a gentle banner: "Session was
-   interrupted - we saved 7 reps".
-Accessibility: large text, ≥ 48 dp touch targets, color is never the only signal (icons + text), TalkBack labels.
-Loading, empty (no reference arm yet → hide the comparison and explain), and error states.
-```
+Already handled (keep): the device keeps recording while disconnected; GET_REPS replay on reconnect; the
+"End session now" interrupted save; command timeouts; reps written to Room immediately; stale in_progress →
+interrupted on next launch; device ERROR / unexpected state → interrupted.
 
-### P7 — Clinician detailed view
-
-```text
-Goal: A clinician can inspect every detail of a linked patient's sessions.
-
-Prereqs: P1 schema + RLS (clinician SELECT where clinician_id = auth.uid()), and invite-code linking
-(the patient enters a code in Profile, which sets profiles.clinician_id through a SECURITY DEFINER RPC `link_clinician(code)`).
-
-1. Role routing: after sign-in, read `profiles.role` and send patients to Patient Home and clinicians to Clinician Home.
-2. Clinician Home: a patient list (pseudonym, affected side, last session date, a trend arrow for ROM).
-3. Patient detail: session list + trend charts across sessions (ROM, peak velocity, stability, effort, AI).
-   The affected arm is in the primary color, and the unaffected arm is grey.
-4. Session detail:
-   - Per arm / per set / per rep table: ROM, peak and mean velocity, duration, %MVC A, CCI, SPARC, steadiness,
-     MDF; aggregates with CV; asymmetry index per metric ("lower is better").
-   - Calibration values (rest mean/SD, MVC peaks), app/fw version, packet loss %, and the interruption log (P4).
-   - Averaged curves (ComparisonChart) with ±SD bands.
-   - Raw signal viewer: download the raw trace from Storage on demand (cache it locally), parse it with PacketParser,
-     and plot the angle, EMG A/B envelopes, and velocity vs time with rep boundaries and set markers. Support pinch-zoom/pan
-     and channel toggles.
-   - "Export CSV" (per-rep metrics), shared through the Android share sheet.
-5. Read-only: clinicians cannot edit patient data. Optional: a clinician can set the prescription
-   (sets × reps, rest time) per patient in an `exercise_prescriptions` table that the patient flow reads.
-Tests: RLS checks in SQL (patient B cannot read patient A, and an unlinked clinician cannot read either), and a
-ViewModel test for the drill-down state.
+Add:
+1. Auto-reconnect: persist the last device address (SharedPreferences). When `servicesReady` drops during
+   calibration, a set or rest, call `BleManager.reconnect()` with backoff (1, 2, 4, 8 s… up to 60 s) instead of
+   requiring the scanner. Show a banner: "Reconnecting to ReBand… (attempt n)" with "Open scanner" as a fallback.
+2. Device lost power: after a reconnect the device reports IDLE (no calibration, empty ring). Instead of
+   finishing immediately, keep the reps already stored and offer "Recalibrate and finish set N (k reps left)"
+   (EXERCISE_CALIBRATION → START, continue with the same setIndex and offset the rep indices) or
+   "Save and end".
+3. Give-up timer: if not reconnected after 60 s, show "Save what you did" / "Keep trying" / "Discard".
+4. Foreground service (`foregroundServiceType="connectedDevice"`) from calibration until the session is saved,
+   with an ongoing notification ("Set 1 · 3/5 reps"). Add the FOREGROUND_SERVICE,
+   FOREGROUND_SERVICE_CONNECTED_DEVICE and POST_NOTIFICATIONS permissions (request the last one on API 33+). Let
+   RecordingManager keep capturing while the service runs. Today `foregroundChanged(false)` stops the raw
+   capture as soon as the screen turns off or the user switches apps. Keep the screen on during a set
+   (FLAG_KEEP_SCREEN_ON).
+5. App killed mid-set: on the next connect, if a session became `interrupted` in the last ~15 min and the
+   device's Status shows RECORDING/STOPPED with rep_count > stored reps, offer "Recover reps from the wearable"
+   (GET_REPS from 1, attach to that session, mark it for re-sync).
+6. Phone Bluetooth off: make sure BleManager's adapter-state receiver triggers the same path, and prompt
+   with ACTION_REQUEST_ENABLE.
+7. Calibration interrupted: after a reconnect, read Status. If cal_done shows the device still holds a finished
+   calibration (READY), skip recalibration instead of always restarting at step 1.
+8. Log every interruption (start, duration, cause, reps recovered) in the session (`interruptions` JSON, Room +
+   Supabase) for the clinician.
+Tests: extract the reconnect/resume decisions into a pure reducer and unit test it: drop during a set → reconnect with
+device RECORDING → replay; drop → device IDLE → resume offer; 60 s timeout → save prompt.
+Manual: unplug the ESP32 mid-set, walk out of range, turn phone BT off, swipe the app away mid-set.
 ```
 
 ---
 
-## 4. Other missing features (vs design doc and demo readiness)
+## 5. Other missing features / housekeeping
 
-**Critical path**
-- **Firmware is essentially empty.** It needs the IMU driver + Madgwick fusion, EMG sampling at 1 kHz on ADC1
-  with band-pass/notch, the BLE GATT server matching `GattConstants` (EMG/IMU/Status/Control), the packet format
-  §5.3, and the IDLE/STREAMING states. Without it, none of the app flow can be demoed with real data.
-  As a stopgap, add a **fake BLE source** in the app (synthetic sine angle + noise EMG) so P0–P7 can be built and
-  tested in parallel.
-- **Signal-quality check (FR-4)** before calibration: rest noise, saturation, IMU stationary → pass/fail per channel.
-- **Auth gate + role-based home (FR-1).** The app currently opens Home with debug buttons for everyone.
-- **Patient ↔ clinician linking via invite code (FR-2).**
+**Product**
+- Patient progress over time: Home has weekly activity only. Add ROM % of healthy arm and stability trends, a streak, and personal bests.
+- Clinician prescription: sets × reps × frequency per patient. `TARGET_REPS` is a firmware compile-time constant,
+  so it needs a new SET_TARGET control opcode or an app-side STOP. Add clinician notes per session as well.
+- Exercise reminders (notification), optional.
+- Account deletion / end-of-term data wipe (design doc §11). Nothing implements it yet.
 
-**Design-doc features not covered above**
-- First-limb proposal (alternate each session) + override reason (FR-8).
-- Arm-switch screen with a rest countdown + recalibration (FR-7), if both arms are recorded.
-- Exercise catalogue / prescription from the backend instead of hard-coded values.
-- Patient home dashboard (FR-11): streak, personal bests, ROM + asymmetry trends, last-session card.
-- Settings: forget device, rest duration, sign out, debug logging. Move the current Sensor debug screen under it.
-- Loading, empty, and error states on every screen (§6.4). Add a permission rationale screen + denial handling.
+**Firmware / protocol**
+- EMG channel B is always 0, so coordination (CCI) from the design doc can't be computed. Drop it from the doc.
+- `STANDALONE_TEST 1` in `reband_config.h`: confirm it can't start a standalone calibration during the demo
+  if the phone connects late (it waits 10 s).
+- The optional angle stream (see P3) is needed for velocity curves and smoothness.
+- Battery level is not reported (design doc §3.3 / NFR-6).
 
-**Quality / validation**
-- Tests: only `PacketParserTest` exists. Add DSP/metric unit tests, Room migration tests, RLS tests, and Compose UI tests for the flow.
-- Validation for the report: ROM vs goniometer (≤ 5° RMS, n ≥ 30 reps), rep-detection accuracy (≥ 95 % on
-  ≥ 10 labelled recordings), packet loss ≤ 1 % at 2 m, reconnect ≤ 10 s, processing ≤ 3 s.
-- Hardware: enclosure + strap, electrode landmark photos (they can be used as references for the SVGs), power decision.
+**Quality / validation (report)**
+- ROM vs goniometer (≤ 5° RMS), rep detection accuracy (≥ 95 %), packet loss at 2 m, reconnect time, battery life.
+- UI tests for the exercise flow and the clinician drill-down.
 
-**Housekeeping**
-- Update the design doc (Firebase → Supabase, Room, minSdk 24, clinician RLS, new flow with sets/tutorial).
-- Supabase email-confirmation deep link (or keep confirmation off for the demo).
-- Account/data deletion for the end of term (§11).
-- Rename package `com.example.app` and the app label before the demo. Remove `Android_app/test.txt`.
+**Docs / cleanup**
+- `Document/Final Design Doc.md` is outdated:
+  - It describes Firebase, but the app uses Supabase RPCs, RLS and Storage.
+  - It describes shoulder flexion, but the exercise is a bicep curl.
+  - It describes 2 EMG channels, but only the MyoWare ENV channel is used.
+  - It puts all processing in the app, but calibration, rep detection and form checks run in the firmware.
+  - It doesn't describe the reference-curl flow.
+- `firmware/Reband/Final Design Doc.md` is a duplicate copy. Keep one.
+- Remove `Android_app/test.txt`. Consider untracking `Android_app/.idea/*`. Rename the `com.example.app` package before the demo.
