@@ -35,6 +35,34 @@ Verify:
 - Authentication > Users > **Add user** creates a test user and a matching `profiles` row appears.
 - Clinician accounts: see section 6.
 
+### Apply every migration, in order
+
+After `setup.sql`, run **every** file in [migrations/](./migrations) in the SQL Editor, in file-name order (the
+timestamp prefix is the order). Every file is safe to re-run:
+
+1. [20261116000000_clinician_patient_pairing.sql](./migrations/20261116000000_clinician_patient_pairing.sql) (section 6)
+2. [20261117000000_auto_verify_clinicians.sql](./migrations/20261117000000_auto_verify_clinicians.sql) (section 6)
+3. [20261118000000_exercise_sessions.sql](./migrations/20261118000000_exercise_sessions.sql) (section 7)
+4. [20261118000001_recording_upload_upserts.sql](./migrations/20261118000001_recording_upload_upserts.sql) (section 5)
+
+The app does not create or check any of this itself, so a skipped file only shows up as a feature failing at run
+time. Without file 3 the app cannot upload or restore exercise sessions: History still shows what is on the phone,
+but **Settings > Sync status** reports "Exercise history isn't set up on the server yet", sessions stay
+"Saved on phone", and nothing comes back after a reinstall or a sign-in on another phone.
+
+Check that the functions the app calls exist (expect four rows):
+
+```sql
+select p.proname
+from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'public'
+  and p.proname in ('get_my_account', 'save_exercise_session', 'get_exercise_sessions', 'get_assigned_patients_activity')
+order by 1;
+```
+
+If they exist but the app still reports the server as not set up, the API has not picked up the new functions yet;
+run `notify pgrst, 'reload schema';` and use **Sync now** in the app.
+
 ## 5. Connect the Android app
 
 Dashboard > **Project Settings > API** (or **Connect**): copy the **Project URL** and the **anon / publishable key**.
@@ -48,7 +76,10 @@ SUPABASE_PUBLISHABLE_KEY=<publishable-key>
 
 The Android build reads these values from `local.properties` and uses them for email/password
 authentication. Rebuild the app after changing them. In Profile, users can create an account,
-sign in, and sign out; the client restores saved sessions. If email confirmation is enabled,
+sign in, and sign out; the client restores saved sessions. If a saved session can't be refreshed when
+the app starts (no network), the app stays signed in from the saved account and shows the data stored
+on the phone; server features resume once the refresh succeeds, and logging out needs a connection.
+If email confirmation is enabled,
 confirm the address before signing in. The app does not handle confirmation deep links.
 Recordings are saved offline and uploaded by WorkManager to
 `recordings/<user_id>/<recording_id>.getms`. On existing projects, apply
@@ -111,6 +142,13 @@ two pairing migrations. It only adds things and is safe to re-run. It adds:
   (`no_access` otherwise). `get_assigned_patients_activity()`: last completed session per active patient.
 
 Removing a clinician (by either side) ends their access on the next read; the patient's sessions are not changed.
+
+**How the app uses it.** The phone's Room database is what the patient sees; the server copy is what clinicians read
+and what a reinstall or a new sign-in restores from. On every sign-in the app calls `get_exercise_sessions` and adds
+the sessions and reps the phone is missing, then uploads finished sessions with `save_exercise_session`. Uploads that
+fail are retried by a WorkManager job once the phone is online, also when the app is closed. History marks each
+session "Synced" or "Saved on phone"; pulling down on History, or **Settings > Sync now**, repeats both steps and
+shows the last error. Signing out removes only the copies that are already on the server.
 
 **Checking the rules** (SQL editor, replace the UUIDs). Each `set` simulates a signed-in user:
 

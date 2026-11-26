@@ -5,14 +5,17 @@ import android.util.Patterns
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.app.RecordingApplication
+import com.example.app.SESSION_INITIALIZATION_WAIT_MS
 import com.example.app.data.ExerciseSessionRepository
 import com.example.app.data.remote.AccountRepository
 import com.example.app.data.remote.SupabaseProvider
+import io.github.jan.supabase.auth.status.SessionStatus
 import io.github.jan.supabase.exceptions.HttpRequestException
 import io.github.jan.supabase.exceptions.RestException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /** Which side of the login toggle is selected. The backend still decides the real account type. */
 enum class LoginRole { Patient, Clinician }
@@ -20,7 +23,11 @@ enum class LoginRole { Patient, Clinician }
 sealed interface AuthState {
     data object Loading : AuthState
     data object SignedOut : AuthState
-    data class SignedIn(val email: String?) : AuthState
+    /**
+     * [authenticated] is false while the session saved on this phone can't be refreshed (e.g.
+     * offline): the user and their local data are known, server calls don't work yet.
+     */
+    data class SignedIn(val email: String?, val userId: String? = null, val authenticated: Boolean = true) : AuthState
 }
 
 class AuthViewModel(app: Application) : AndroidViewModel(app) {
@@ -49,9 +56,17 @@ class AuthViewModel(app: Application) : AndroidViewModel(app) {
     init {
         // The Supabase client restores a saved session from storage, so users stay logged in.
         if (configured) viewModelScope.launch {
-            SupabaseProvider.auth.awaitInitialization()
-            account.sessionStatus.collect {
-                _state.value = if (account.userId != null) AuthState.SignedIn(account.email) else AuthState.SignedOut
+            // Offline, the client can't refresh an old token: it stays "initializing" while the
+            // token is close to expiry and reports a refresh failure once it has expired. The
+            // account is still saved on this phone, so its local history must stay reachable.
+            withTimeoutOrNull(SESSION_INITIALIZATION_WAIT_MS) { SupabaseProvider.auth.awaitInitialization() }
+            account.sessionStatus.collect { status ->
+                val user = account.signedInUser(status)
+                _state.value = when {
+                    user != null -> AuthState.SignedIn(user.email, user.id, user.authenticated)
+                    status is SessionStatus.Initializing -> AuthState.Loading
+                    else -> AuthState.SignedOut
+                }
             }
         }
     }
@@ -116,17 +131,24 @@ class AuthViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun signOut() = submit {
-        // Sensor capture is closed and kept on this device; it uploads when the owner signs in again.
-        (getApplication<Application>() as RecordingApplication).recordings.manager.stop("Signed out; recording saved on this device")
-        val sessions = ExerciseSessionRepository.get(getApplication())
-        // Upload finished sessions while the session JWT is still valid; failures stay queued locally.
-        account.userId?.let { sessions.syncPending(it) }
-        account.signOut()
-        // Exercise rows already on the server are removed from this phone; unsynced ones are kept
-        // (filtered by patient id) so they upload on the owner's next login. Sensor recordings are
-        // kept per owner as well (they are never reassigned to another account).
-        sessions.clearSyncedLocalCopies()
+    fun signOut() {
+        // Signed in from the saved session only (offline, it couldn't be refreshed): the server
+        // can't be told, exactly as when logging out offline with a session that is still valid.
+        if (configured && _state.value is AuthState.SignedIn && account.userId == null) {
+            return showError("Can't reach the server. Check your internet connection.")
+        }
+        submit {
+            // Sensor capture is closed and kept on this device; it uploads when the owner signs in again.
+            (getApplication<Application>() as RecordingApplication).recordings.manager.stop("Signed out; recording saved on this device")
+            val sessions = ExerciseSessionRepository.get(getApplication())
+            // Upload finished sessions while the session JWT is still valid; failures stay queued locally.
+            account.userId?.let { sessions.syncPending(it) }
+            account.signOut()
+            // Exercise rows already on the server are removed from this phone; unsynced ones are kept
+            // (filtered by patient id) so they upload on the owner's next login. Sensor recordings are
+            // kept per owner as well (they are never reassigned to another account).
+            sessions.clearSyncedLocalCopies()
+        }
     }
 
     fun clearMessages() {

@@ -84,7 +84,7 @@ private val SessionWithReps.startMillis get() = session.startedAtMillis ?: sessi
 // --- History list ----------------------------------------------------------------------------
 
 @Composable
-fun SessionListItem(data: SessionWithReps, onClick: () -> Unit) {
+fun SessionListItem(data: SessionWithReps, showSyncState: Boolean = false, onClick: () -> Unit) {
     val s = data.session
     ReBandCard(Modifier.clip(RoundedCornerShape(20.dp)).clickable(onClick = onClick)) {
         Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -103,6 +103,14 @@ fun SessionListItem(data: SessionWithReps, onClick: () -> Unit) {
                     "${s.repCount} ${if (s.repCount == 1) "rep" else "reps"} · ${SessionMetrics.clock(s.durationMs)}",
                     style = MaterialTheme.typography.bodyMedium,
                 )
+                // Patient's own list only: whether this session has reached the server yet.
+                if (showSyncState) {
+                    Text(
+                        if (s.synced) "Synced" else "Saved on phone",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (s.synced) MaterialTheme.colorScheme.onSurfaceVariant else Orange,
+                    )
+                }
             }
             Icon(ReBandIcons.ChevronRight, contentDescription = "Open session", tint = Teal)
         }

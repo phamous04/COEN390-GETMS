@@ -111,8 +111,10 @@ data class CalibrationValues(val romRefX10: Int, val mvcMv: Int, val baselineMv:
 class ExerciseViewModel(app: Application) : AndroidViewModel(app) {
     private val ble = BleManager.get(app)
     private val repo = ExerciseSessionRepository.get(app)
+    private val recordingServices = (app as RecordingApplication).recordings
     /** Offline raw-sensor capture (teammate's RecordingManager); this flow owns the device commands. */
-    private val sensorRecorder = (app as RecordingApplication).recordings.manager
+    private val sensorRecorder = recordingServices.manager
+    private val sessionSync = recordingServices.sessionSync
 
     private val _state = MutableStateFlow(ExerciseUiState())
     val state: StateFlow<ExerciseUiState> = _state.asStateFlow()
@@ -176,7 +178,7 @@ class ExerciseViewModel(app: Application) : AndroidViewModel(app) {
         resetState()
         viewModelScope.launch {
             repo.closeStale(patientId, currentSessionId = "")
-            repo.syncPending(patientId)
+            sessionSync.upload(patientId)
         }
     }
 
@@ -562,7 +564,8 @@ class ExerciseViewModel(app: Application) : AndroidViewModel(app) {
             db { repo.save(saved); done.complete(Unit) }
             done.await()
             _state.update { it.copy(step = FlowStep.SUMMARY, waiting = null, savedSessionId = saved.id, connectionLostWhileRecording = false) }
-            repo.syncPending(saved.patientId)
+            // Uploads now if it can; otherwise the background job sends it once the phone is online.
+            sessionSync.upload(saved.patientId)
         }
     }
 

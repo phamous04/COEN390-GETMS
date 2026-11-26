@@ -26,6 +26,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.example.app.data.RestoreState
 import com.example.app.data.remote.AccountInfo
 import com.example.app.data.remote.AccountRole
 import com.example.app.ui.components.ReBandIcons
@@ -58,7 +59,6 @@ import com.example.app.ui.exercise.ExerciseFlowScreen
 import com.example.app.ui.exercise.ExerciseViewModel
 import com.example.app.ui.history.PatientHistoryScreen
 import com.example.app.ui.history.SessionDetailScreen
-import com.example.app.data.remote.SupabaseProvider
 import com.example.app.ui.screens.HomeScreen
 import com.example.app.ui.screens.LoadingScreen
 import com.example.app.ui.screens.LoginRole
@@ -124,7 +124,7 @@ fun AppNavHost(authViewModel: AuthViewModel = viewModel()) {
     when (val current = state) {
         AuthState.Loading -> LoadingScreen()
         AuthState.SignedOut -> AuthNavHost(authViewModel)
-        is AuthState.SignedIn -> SignedInRoot(current.email, authViewModel)
+        is AuthState.SignedIn -> SignedInRoot(current.email, current.userId, current.authenticated, authViewModel)
     }
 }
 
@@ -134,7 +134,7 @@ fun AppNavHost(authViewModel: AuthViewModel = viewModel()) {
  * may continue with the patient experience, which grants no clinician access.
  */
 @Composable
-private fun SignedInRoot(email: String?, authViewModel: AuthViewModel) {
+private fun SignedInRoot(email: String?, userId: String?, authenticated: Boolean, authViewModel: AuthViewModel) {
     val accountViewModel: AccountViewModel = viewModel(key = "account-$email")
     val accountState by accountViewModel.state.collectAsState()
     val busy by authViewModel.busy.collectAsState()
@@ -145,11 +145,24 @@ private fun SignedInRoot(email: String?, authViewModel: AuthViewModel) {
     var editingName by remember { mutableStateOf(false) }
     val onEditName = { editingName = true }
 
+    // Signed in from the saved session before it could be refreshed (offline or slow start-up),
+    // the account lookup fails. Repeat it once when the session is live again, unless the patient
+    // already chose "Continue to exercises", where a reload would interrupt them.
+    var retryWhenLive by remember { mutableStateOf(!authenticated) }
+    LaunchedEffect(authenticated, accountState) {
+        if (!authenticated) {
+            retryWhenLive = true
+        } else if (retryWhenLive && accountState is AccountState.Failed && !continueWithoutAccount) {
+            retryWhenLive = false
+            accountViewModel.load()
+        }
+    }
+
     when (val state = accountState) {
         AccountState.Loading -> LoadingScreen()
         is AccountState.Failed ->
             if (continueWithoutAccount) {
-                MainNavHost(email, authViewModel, account = null, onEditName = onEditName)
+                MainNavHost(email, userId, authViewModel, account = null, onEditName = onEditName)
             } else {
                 AccountLoadErrorScreen(
                     state.message,
@@ -162,10 +175,10 @@ private fun SignedInRoot(email: String?, authViewModel: AuthViewModel) {
             // A fresh login must match the Patient/Clinician toggle; restored sessions skip this.
             val actual = if (state.account.role == AccountRole.Patient) LoginRole.Patient else LoginRole.Clinician
             when (expectedRole) {
-                null -> SignedInContent(state, email, authViewModel, accountViewModel, busy, onEditName)
+                null -> SignedInContent(state, email, userId, authViewModel, accountViewModel, busy, onEditName)
                 actual -> {
                     LaunchedEffect(Unit) { authViewModel.confirmRole() }
-                    SignedInContent(state, email, authViewModel, accountViewModel, busy, onEditName)
+                    SignedInContent(state, email, userId, authViewModel, accountViewModel, busy, onEditName)
                 }
                 else -> {
                     LaunchedEffect(Unit) { authViewModel.rejectRole(actual) }
@@ -193,13 +206,14 @@ private fun SignedInRoot(email: String?, authViewModel: AuthViewModel) {
 private fun SignedInContent(
     state: AccountState.Ready,
     email: String?,
+    userId: String?,
     authViewModel: AuthViewModel,
     accountViewModel: AccountViewModel,
     busy: Boolean,
     onEditName: () -> Unit,
 ) {
     when (state.account.role) {
-        AccountRole.Patient -> MainNavHost(email, authViewModel, state.account, onEditName)
+        AccountRole.Patient -> MainNavHost(email, userId, authViewModel, state.account, onEditName)
         AccountRole.VerifiedClinician -> ClinicianNavHost(state.account, authViewModel, onEditName)
         AccountRole.PendingClinician -> PendingVerificationScreen(
             state.account,
@@ -225,7 +239,13 @@ private fun AuthNavHost(authViewModel: AuthViewModel) {
 }
 
 @Composable
-private fun MainNavHost(email: String?, authViewModel: AuthViewModel, account: AccountInfo?, onEditName: () -> Unit) {
+private fun MainNavHost(
+    email: String?,
+    userId: String?,
+    authViewModel: AuthViewModel,
+    account: AccountInfo?,
+    onEditName: () -> Unit,
+) {
     val nav = rememberNavController()
     val backStack by nav.currentBackStackEntryAsState()
     val currentRoute = backStack?.destination?.route
@@ -237,10 +257,9 @@ private fun MainNavHost(email: String?, authViewModel: AuthViewModel, account: A
     val fullScreen = currentRoute in setOf(
         Routes.DEVICES, Routes.SENSOR, Routes.EXERCISE_FLOW, Routes.ENTER_CLINICIAN_CODE, Routes.CONFIRM_CLINICIAN,
     )
-    // Sessions are stored per patient; the id comes from the backend account (or the auth session
-    // when the account type could not be loaded).
-    val authUserId = remember(email) { SupabaseProvider.auth.currentUserOrNull()?.id }
-    val patientId = account?.userId ?: authUserId
+    // Sessions are stored per patient; the id comes from the backend account, or from the auth
+    // session when the account type could not be loaded (also offline, from the saved session).
+    val patientId = account?.userId ?: userId
     // Activity-scoped so the flow survives a trip to the device scanner (e.g. to reconnect mid-set).
     val exercise: ExerciseViewModel = viewModel(key = "exercise-$patientId")
     val history: HistoryViewModel = viewModel(key = "history-$patientId")
@@ -253,6 +272,9 @@ private fun MainNavHost(email: String?, authViewModel: AuthViewModel, account: A
     val historyList by history.history.collectAsState()
     val weekly by history.weekly.collectAsState()
     val sensorRecordings by history.recordings.collectAsState()
+    val restoreState by history.restoreState.collectAsState()
+    val refreshing by history.refreshing.collectAsState()
+    val syncStatus by history.syncStatus.collectAsState()
     val startExercise = { if (wearable.canStartExercise && patientId != null) nav.navigate(Routes.EXERCISE_FLOW) { launchSingleTop = true } }
     val openTab = { route: String ->
         nav.navigate(route) {
@@ -316,6 +338,9 @@ private fun MainNavHost(email: String?, authViewModel: AuthViewModel, account: A
                 PatientHistoryScreen(
                     historyList,
                     recordings = sensorRecordings,
+                    restore = restoreState,
+                    refreshing = refreshing,
+                    onRefresh = history::refresh,
                     onOpenSession = { nav.navigate(Routes.session(it)) },
                     onStartExercise = { openTab(Routes.EXERCISES) },
                 )
@@ -344,6 +369,10 @@ private fun MainNavHost(email: String?, authViewModel: AuthViewModel, account: A
                     error = error,
                     wearable = wearable,
                     fullName = account?.fullName,
+                    sessionsWaiting = historyList?.count { !it.session.synced } ?: 0,
+                    syncing = refreshing || syncStatus.running,
+                    syncError = syncStatus.lastError ?: (restoreState as? RestoreState.Failed)?.message,
+                    onSyncNow = history::refresh,
                     onEditName = onEditName,
                     onOpenMyClinician = { nav.navigate(Routes.MY_CLINICIAN) },
                     onConnectWearable = { nav.navigate(Routes.DEVICES) },

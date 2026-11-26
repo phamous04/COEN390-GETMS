@@ -26,11 +26,18 @@ sealed interface RemoteSessions {
     data object NoAccess : RemoteSessions
 }
 
+/** The server calls behind exercise sessions; unit tests replace it with an in-memory server. */
+interface ExerciseSessionRemote {
+    suspend fun save(session: SessionWithReps)
+    suspend fun sessions(patientId: String): RemoteSessions
+    suspend fun assignedPatientsActivity(): List<PatientActivity>
+}
+
 /**
  * Supabase side of exercise sessions. See supabase/migrations/20261118000000_exercise_sessions.sql.
  * The server takes the patient id from the session JWT; the app never sends it for writes.
  */
-class ExerciseRemoteRepository {
+class ExerciseRemoteRepository : ExerciseSessionRemote {
     private suspend fun call(function: String, params: JsonObject? = null): JsonElement {
         if (!SupabaseProvider.configured) throw PairingException(PairingException.Kind.ServerNotReady)
         try {
@@ -45,7 +52,7 @@ class ExerciseRemoteRepository {
     }
 
     /** Uploads one finished session; safe to repeat (the server ignores a known id). */
-    suspend fun save(session: SessionWithReps) {
+    override suspend fun save(session: SessionWithReps) {
         call(
             "save_exercise_session",
             buildJsonObject {
@@ -55,12 +62,12 @@ class ExerciseRemoteRepository {
         )
     }
 
-    suspend fun sessions(patientId: String): RemoteSessions {
+    override suspend fun sessions(patientId: String): RemoteSessions {
         val json = call("get_exercise_sessions", buildJsonObject { put("p_patient_id", patientId) })
         return ExerciseJson.sessions(json, patientId)
     }
 
-    suspend fun assignedPatientsActivity(): List<PatientActivity> =
+    override suspend fun assignedPatientsActivity(): List<PatientActivity> =
         ExerciseJson.activity(call("get_assigned_patients_activity"))
 }
 

@@ -37,6 +37,7 @@ import com.example.app.ui.components.ReBandIcons
 import com.example.app.ui.components.ScreenTitle
 import com.example.app.ui.components.WearableStatusCard
 import com.example.app.ui.pairing.NavCard
+import com.example.app.ui.pairing.OutlineAction
 import com.example.app.ui.theme.Orange
 import com.example.app.ui.theme.Teal
 
@@ -47,6 +48,12 @@ fun SettingsScreen(
     error: String?,
     wearable: WearableUiState,
     fullName: String?,
+    /** Finished sessions that are on this phone but not on the server yet. */
+    sessionsWaiting: Int,
+    syncing: Boolean,
+    /** Why the last restore or upload failed, if it did. */
+    syncError: String?,
+    onSyncNow: () -> Unit,
     onEditName: () -> Unit,
     onOpenMyClinician: () -> Unit,
     onConnectWearable: () -> Unit,
@@ -100,6 +107,33 @@ fun SettingsScreen(
                     WearableStatus.Connecting -> SmallActionButton("Cancel", MaterialTheme.colorScheme.error, Modifier.weight(1f), onDisconnectWearable)
                     else -> SmallActionButton("Connect Wearable", Teal, Modifier.weight(1f), onConnectWearable)
                 }
+            }
+        }
+
+        Text("Exercise history", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        ReBandCard {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconBadge(ReBandIcons.History)
+                    Column(Modifier.weight(1f).padding(horizontal = 14.dp)) {
+                        Text("Sync status", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            when {
+                                syncing -> "Syncing…"
+                                sessionsWaiting == 1 -> "1 session is saved on this phone and waiting to upload."
+                                sessionsWaiting > 1 -> "$sessionsWaiting sessions are saved on this phone and waiting to upload."
+                                syncError != null -> "Sessions on this phone are uploaded, but the server could not be checked for older ones."
+                                else -> "All sessions are synced."
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                if (syncError != null && !syncing) {
+                    Text("Last error: $syncError", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+                }
+                OutlineAction("Sync now", Teal, onSyncNow, Modifier.fillMaxWidth(), loading = syncing)
             }
         }
 

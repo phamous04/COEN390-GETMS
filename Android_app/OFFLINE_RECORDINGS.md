@@ -27,7 +27,11 @@ A bad checksum, mismatched identity, missing file or invalid format becomes `COR
 with a persisted error. Corrupt files are retained for diagnosis. Recording creation and workers
 wait for one startup recovery pass, so recovery never touches an active writer/upload.
 
-Files survive app restarts, reboots and network loss. Uninstall/clear-storage removes them.
+Files survive app restarts, reboots and network loss. Uninstall/clear-storage removes them, together
+with the History list of recordings: that list is the phone's Room table, and there is no server table
+to rebuild it from. Recordings uploaded before the uninstall stay in Storage under
+`recordings/<user_id>/`, but the app does not list them again; History says so under the list.
+Exercise sessions are different: they are restored from the server (see `supabase/README.md`, section 7).
 Recordings and their database are excluded together from cloud backup/device transfer to keep
 sensor data local and prevent inconsistent metadata/file restores. Sign-out retains pending data;
 account changes never reassign/upload another user's recordings. The v1→v2 migration preserves
