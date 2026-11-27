@@ -1,0 +1,78 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="240dp"
+    android:height="240dp"
+    android:viewportWidth="240"
+    android:viewportHeight="240">
+    <!-- Converted from Android_app/art/placement_imu.svg. Edit the SVG, then convert it again. -->
+    <!-- Outer side of the right arm, hanging down. Trunk behind it. -->
+    <path
+        android:fillColor="#1B2B2B"
+        android:fillAlpha="0.05"
+        android:pathData="M90,-30 H150 A40,40 0 0 1 190,10 V230 A40,40 0 0 1 150,270 H90 A40,40 0 0 1 50,230 V10 A40,40 0 0 1 90,-30 Z"/>
+    <path
+        android:fillColor="#1B2B2B"
+        android:fillAlpha="0.1"
+        android:strokeColor="#1B2B2B"
+        android:strokeWidth="3"
+        android:strokeLineJoin="round"
+        android:pathData="M149,-40 L149,116 L143,276 A23,23 0 0 1 97,276 L91,116 A29,29 0 0 1 91,116 L91,-40 A29,29 0 0 1 149,-40 Z"/>
+    <path
+        android:fillColor="#1B2B2B"
+        android:pathData="M115,116 A5,5 0 1 0 125,116 A5,5 0 1 0 115,116 Z"/>
+    <!-- Upper-arm IMU just above the elbow. -->
+    <path
+        android:fillColor="#1B2B2B"
+        android:fillAlpha="0.22"
+        android:strokeColor="#1B2B2B"
+        android:strokeWidth="2"
+        android:pathData="M91,56 H149 A4,4 0 0 1 153,60 V72 A4,4 0 0 1 149,76 H91 A4,4 0 0 1 87,72 V60 A4,4 0 0 1 91,56 Z"/>
+    <path
+        android:fillColor="#1B2B2B"
+        android:fillAlpha="0.4"
+        android:strokeColor="#1B2B2B"
+        android:strokeWidth="2.5"
+        android:pathData="M105,49 H135 A5,5 0 0 1 140,54 V78 A5,5 0 0 1 135,83 H105 A5,5 0 0 1 100,78 V54 A5,5 0 0 1 105,49 Z"/>
+    <path
+        android:fillColor="#1B2B2B"
+        android:pathData="M105.8,56 A2.2,2.2 0 1 0 110.2,56 A2.2,2.2 0 1 0 105.8,56 Z"/>
+    <path
+        android:fillColor="#1B2B2B"
+        android:pathData="M113.8,56 A2.2,2.2 0 1 0 118.2,56 A2.2,2.2 0 1 0 113.8,56 Z"/>
+    <path
+        android:fillColor="#1B2B2B"
+        android:pathData="M121.8,56 A2.2,2.2 0 1 0 126.2,56 A2.2,2.2 0 1 0 121.8,56 Z"/>
+    <path
+        android:fillColor="#1B2B2B"
+        android:pathData="M129.8,56 A2.2,2.2 0 1 0 134.2,56 A2.2,2.2 0 1 0 129.8,56 Z"/>
+    <path
+        android:fillColor="#1B2B2B"
+        android:pathData="M114,64 H126 A2,2 0 0 1 128,66 V74 A2,2 0 0 1 126,76 H114 A2,2 0 0 1 112,74 V66 A2,2 0 0 1 114,64 Z"/>
+    <!-- Forearm IMU just below the elbow, the same way round. -->
+    <path
+        android:fillColor="#1B2B2B"
+        android:fillAlpha="0.22"
+        android:strokeColor="#1B2B2B"
+        android:strokeWidth="2"
+        android:pathData="M93,156 H147 A4,4 0 0 1 151,160 V172 A4,4 0 0 1 147,176 H93 A4,4 0 0 1 89,172 V160 A4,4 0 0 1 93,156 Z"/>
+    <path
+        android:fillColor="#1B2B2B"
+        android:fillAlpha="0.4"
+        android:strokeColor="#1B2B2B"
+        android:strokeWidth="2.5"
+        android:pathData="M105,149 H135 A5,5 0 0 1 140,154 V178 A5,5 0 0 1 135,183 H105 A5,5 0 0 1 100,178 V154 A5,5 0 0 1 105,149 Z"/>
+    <path
+        android:fillColor="#1B2B2B"
+        android:pathData="M105.8,156 A2.2,2.2 0 1 0 110.2,156 A2.2,2.2 0 1 0 105.8,156 Z"/>
+    <path
+        android:fillColor="#1B2B2B"
+        android:pathData="M113.8,156 A2.2,2.2 0 1 0 118.2,156 A2.2,2.2 0 1 0 113.8,156 Z"/>
+    <path
+        android:fillColor="#1B2B2B"
+        android:pathData="M121.8,156 A2.2,2.2 0 1 0 126.2,156 A2.2,2.2 0 1 0 121.8,156 Z"/>
+    <path
+        android:fillColor="#1B2B2B"
+        android:pathData="M129.8,156 A2.2,2.2 0 1 0 134.2,156 A2.2,2.2 0 1 0 129.8,156 Z"/>
+    <path
+        android:fillColor="#1B2B2B"
+        android:pathData="M114,164 H126 A2,2 0 0 1 128,166 V174 A2,2 0 0 1 126,176 H114 A2,2 0 0 1 112,174 V166 A2,2 0 0 1 114,164 Z"/>
+</vector>

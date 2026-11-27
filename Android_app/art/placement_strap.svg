@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240" viewBox="0 0 240 240">
+  <!-- Outer side of the right arm with the elbow bent. Trunk behind it. -->
+  <rect x="18" y="-30" width="140" height="300" rx="40" fill="#1B2B2B" fill-opacity="0.05" stroke="none"/>
+  <path d="M117,-40 L117,113.1 L282.1,185.6 A23,23 0 0 1 264.8,228.2 L77.1,158.9 A29,29 0 0 1 59,132 L59,-40 A29,29 0 0 1 117,-40 Z" fill="#1B2B2B" fill-opacity="0.10" stroke="#1B2B2B" stroke-width="3" stroke-linejoin="round"/>
+  <circle cx="88" cy="132" r="5" fill="#1B2B2B" stroke="none"/>
+  <rect x="55" y="62" width="66" height="20" rx="4" fill="#1B2B2B" fill-opacity="0.22" stroke="#1B2B2B" stroke-width="2"/>
+    <rect x="68" y="55" width="40" height="34" rx="5" fill="#1B2B2B" fill-opacity="0.40" stroke="#1B2B2B" stroke-width="2.5"/>
+    <circle cx="76" cy="62" r="2.2" fill="#1B2B2B" stroke="none"/>
+    <circle cx="84" cy="62" r="2.2" fill="#1B2B2B" stroke="none"/>
+    <circle cx="92" cy="62" r="2.2" fill="#1B2B2B" stroke="none"/>
+    <circle cx="100" cy="62" r="2.2" fill="#1B2B2B" stroke="none"/>
+    <rect x="80" y="70" width="16" height="12" rx="2" fill="#1B2B2B" stroke="none"/>
+  <!-- Forearm strap and sensor, turned with the forearm about the elbow. -->
+  <g transform="rotate(-68 88 132)">
+    <rect x="57" y="182" width="62" height="20" rx="4" fill="#1B2B2B" fill-opacity="0.22" stroke="#1B2B2B" stroke-width="2"/>
+    <rect x="68" y="175" width="40" height="34" rx="5" fill="#1B2B2B" fill-opacity="0.40" stroke="#1B2B2B" stroke-width="2.5"/>
+    <circle cx="76" cy="182" r="2.2" fill="#1B2B2B" stroke="none"/>
+    <circle cx="84" cy="182" r="2.2" fill="#1B2B2B" stroke="none"/>
+    <circle cx="92" cy="182" r="2.2" fill="#1B2B2B" stroke="none"/>
+    <circle cx="100" cy="182" r="2.2" fill="#1B2B2B" stroke="none"/>
+    <rect x="80" y="190" width="16" height="12" rx="2" fill="#1B2B2B" stroke="none"/>
+  </g>
+  <!-- Cables: slack between the two sensors, and a loose run up the arm. -->
+  <path d="M96,89 C100,118 104,150 124,150 C134,150 136,144 139,139" fill="none" stroke="#1B2B2B" stroke-width="3" stroke-linecap="round"/>
+  <path d="M94,55 C98,36 80,22 90,0" fill="none" stroke="#1B2B2B" stroke-width="3" stroke-linecap="round"/>
+</svg>

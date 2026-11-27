@@ -41,13 +41,17 @@ enum class Arm(val db: String, val label: String) {
 enum class FlowStep {
     /** Pick the exercising arm (the healthy arm is the other one). */
     SETUP,
+    /** How to wear the ReBand, shown for the healthy arm before its calibration. */
+    PLACEMENT,
     /** Calibrate the wearable on the healthy arm. */
     REFERENCE_CALIBRATION,
+    /** What one curl looks like, shown once the healthy arm is calibrated. */
+    TUTORIAL,
     /** Record one controlled reference curl. */
     REFERENCE_RECORD,
     /** Show the captured reference rep: accept or redo. */
     REFERENCE_REVIEW,
-    /** Move the wearable to the exercising arm. */
+    /** Move the wearable to the exercising arm (same placement guide, for that arm). */
     SWITCH_ARM,
     /** Calibrate again on the exercising arm. */
     EXERCISE_CALIBRATION,
@@ -103,6 +107,7 @@ data class CalibrationValues(val romRefX10: Int, val mvcMv: Int, val baselineMv:
  * Bicep Curl workflow over the real firmware protocol (firmware/Reband/BLE_PROTOCOL.md):
  * CALIBRATE 1-3 on the healthy arm -> START, first Rep Event, STOP (reference) -> CALIBRATE 1-3 on
  * the exercising arm -> START ... STOP (or the firmware's own target-reps stop).
+ * The placement guide and the curl tutorial in between only change [FlowStep]; they send nothing.
  *
  * Only one command is in flight at a time ([pending]); each step waits for the Status notification
  * that confirms it, so no conflicting or repeated commands are sent. Reps are written to Room as
@@ -206,7 +211,28 @@ class ExerciseViewModel(app: Application) : AndroidViewModel(app) {
             createdAtMillis = now,
             updatedAtMillis = now,
         )
+        _state.update { it.copy(step = FlowStep.PLACEMENT, error = null) }
+    }
+
+    // --- Placement guide and curl tutorial (no device commands) ---------------------------------
+
+    /** Back from the healthy-arm placement guide. Nothing is calibrated or stored yet, so the arm can still be changed. */
+    fun backToSetup() {
+        if (_state.value.step != FlowStep.PLACEMENT) return
+        session = null
+        _state.update { it.copy(step = FlowStep.SETUP, error = null) }
+    }
+
+    /** "Done, calibrate": the wearable is on the healthy arm. */
+    fun confirmPlacement() {
+        if (_state.value.step != FlowStep.PLACEMENT) return
         _state.update { it.copy(step = FlowStep.REFERENCE_CALIBRATION, calibration = CalibrationProgress(), error = null) }
+    }
+
+    /** "I'm ready" on the curl tutorial. A device error raised meanwhile stays on screen. */
+    fun confirmTutorial() {
+        if (_state.value.step != FlowStep.TUTORIAL) return
+        _state.update { it.copy(step = FlowStep.REFERENCE_RECORD) }
     }
 
     // --- Calibration (both arms) ----------------------------------------------------------------
@@ -232,7 +258,7 @@ class ExerciseViewModel(app: Application) : AndroidViewModel(app) {
         when (s.step) {
             FlowStep.REFERENCE_CALIBRATION, FlowStep.EXERCISE_CALIBRATION ->
                 _state.update { it.copy(calibration = CalibrationProgress(), error = null) }
-            FlowStep.REFERENCE_RECORD, FlowStep.REFERENCE_REVIEW ->
+            FlowStep.TUTORIAL, FlowStep.REFERENCE_RECORD, FlowStep.REFERENCE_REVIEW ->
                 _state.update { it.copy(step = FlowStep.REFERENCE_CALIBRATION, calibration = CalibrationProgress(), referenceRep = null, error = null) }
             FlowStep.READY ->
                 _state.update { it.copy(step = FlowStep.EXERCISE_CALIBRATION, calibration = CalibrationProgress(), exerciseCalibration = null, error = null) }
@@ -261,7 +287,7 @@ class ExerciseViewModel(app: Application) : AndroidViewModel(app) {
             persist()
             _state.update {
                 it.copy(
-                    step = FlowStep.REFERENCE_RECORD,
+                    step = FlowStep.TUTORIAL,
                     calibration = CalibrationProgress(nextStep = 4),
                     referenceCalibration = values,
                     waiting = null,
@@ -433,7 +459,7 @@ class ExerciseViewModel(app: Application) : AndroidViewModel(app) {
             FlowStep.REFERENCE_CALIBRATION, FlowStep.EXERCISE_CALIBRATION ->
                 // The firmware drops the calibration on a failed step: start this arm over at step 1.
                 _state.update { it.copy(calibration = CalibrationProgress(), waiting = null, error = message) }
-            FlowStep.REFERENCE_RECORD ->
+            FlowStep.TUTORIAL, FlowStep.REFERENCE_RECORD ->
                 _state.update { it.copy(waiting = null, error = "$message Calibrate the healthy arm again.") }
             FlowStep.READY ->
                 _state.update { it.copy(waiting = null, error = message) }

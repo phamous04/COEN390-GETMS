@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240" viewBox="0 0 240 240">
+  <!-- Outer side of the right arm, hanging down. Trunk behind it. -->
+  <rect x="50" y="-30" width="140" height="300" rx="40" fill="#1B2B2B" fill-opacity="0.05" stroke="none"/>
+  <path d="M149,-40 L149,116 L143,276 A23,23 0 0 1 97,276 L91,116 A29,29 0 0 1 91,116 L91,-40 A29,29 0 0 1 149,-40 Z" fill="#1B2B2B" fill-opacity="0.10" stroke="#1B2B2B" stroke-width="3" stroke-linejoin="round"/>
+  <circle cx="120" cy="116" r="5" fill="#1B2B2B" stroke="none"/>
+  <!-- Upper-arm IMU just above the elbow. -->
+  <rect x="87" y="56" width="66" height="20" rx="4" fill="#1B2B2B" fill-opacity="0.22" stroke="#1B2B2B" stroke-width="2"/>
+    <rect x="100" y="49" width="40" height="34" rx="5" fill="#1B2B2B" fill-opacity="0.40" stroke="#1B2B2B" stroke-width="2.5"/>
+    <circle cx="108" cy="56" r="2.2" fill="#1B2B2B" stroke="none"/>
+    <circle cx="116" cy="56" r="2.2" fill="#1B2B2B" stroke="none"/>
+    <circle cx="124" cy="56" r="2.2" fill="#1B2B2B" stroke="none"/>
+    <circle cx="132" cy="56" r="2.2" fill="#1B2B2B" stroke="none"/>
+    <rect x="112" y="64" width="16" height="12" rx="2" fill="#1B2B2B" stroke="none"/>
+  <!-- Forearm IMU just below the elbow, the same way round. -->
+  <rect x="89" y="156" width="62" height="20" rx="4" fill="#1B2B2B" fill-opacity="0.22" stroke="#1B2B2B" stroke-width="2"/>
+    <rect x="100" y="149" width="40" height="34" rx="5" fill="#1B2B2B" fill-opacity="0.40" stroke="#1B2B2B" stroke-width="2.5"/>
+    <circle cx="108" cy="156" r="2.2" fill="#1B2B2B" stroke="none"/>
+    <circle cx="116" cy="156" r="2.2" fill="#1B2B2B" stroke="none"/>
+    <circle cx="124" cy="156" r="2.2" fill="#1B2B2B" stroke="none"/>
+    <circle cx="132" cy="156" r="2.2" fill="#1B2B2B" stroke="none"/>
+    <rect x="112" y="164" width="16" height="12" rx="2" fill="#1B2B2B" stroke="none"/>
+</svg>

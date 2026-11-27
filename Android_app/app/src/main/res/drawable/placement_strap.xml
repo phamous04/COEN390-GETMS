@@ -1,0 +1,93 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="240dp"
+    android:height="240dp"
+    android:viewportWidth="240"
+    android:viewportHeight="240">
+    <!-- Converted from Android_app/art/placement_strap.svg. Edit the SVG, then convert it again. -->
+    <!-- Outer side of the right arm with the elbow bent. Trunk behind it. -->
+    <path
+        android:fillColor="#1B2B2B"
+        android:fillAlpha="0.05"
+        android:pathData="M58,-30 H118 A40,40 0 0 1 158,10 V230 A40,40 0 0 1 118,270 H58 A40,40 0 0 1 18,230 V10 A40,40 0 0 1 58,-30 Z"/>
+    <path
+        android:fillColor="#1B2B2B"
+        android:fillAlpha="0.1"
+        android:strokeColor="#1B2B2B"
+        android:strokeWidth="3"
+        android:strokeLineJoin="round"
+        android:pathData="M117,-40 L117,113.1 L282.1,185.6 A23,23 0 0 1 264.8,228.2 L77.1,158.9 A29,29 0 0 1 59,132 L59,-40 A29,29 0 0 1 117,-40 Z"/>
+    <path
+        android:fillColor="#1B2B2B"
+        android:pathData="M83,132 A5,5 0 1 0 93,132 A5,5 0 1 0 83,132 Z"/>
+    <path
+        android:fillColor="#1B2B2B"
+        android:fillAlpha="0.22"
+        android:strokeColor="#1B2B2B"
+        android:strokeWidth="2"
+        android:pathData="M59,62 H117 A4,4 0 0 1 121,66 V78 A4,4 0 0 1 117,82 H59 A4,4 0 0 1 55,78 V66 A4,4 0 0 1 59,62 Z"/>
+    <path
+        android:fillColor="#1B2B2B"
+        android:fillAlpha="0.4"
+        android:strokeColor="#1B2B2B"
+        android:strokeWidth="2.5"
+        android:pathData="M73,55 H103 A5,5 0 0 1 108,60 V84 A5,5 0 0 1 103,89 H73 A5,5 0 0 1 68,84 V60 A5,5 0 0 1 73,55 Z"/>
+    <path
+        android:fillColor="#1B2B2B"
+        android:pathData="M73.8,62 A2.2,2.2 0 1 0 78.2,62 A2.2,2.2 0 1 0 73.8,62 Z"/>
+    <path
+        android:fillColor="#1B2B2B"
+        android:pathData="M81.8,62 A2.2,2.2 0 1 0 86.2,62 A2.2,2.2 0 1 0 81.8,62 Z"/>
+    <path
+        android:fillColor="#1B2B2B"
+        android:pathData="M89.8,62 A2.2,2.2 0 1 0 94.2,62 A2.2,2.2 0 1 0 89.8,62 Z"/>
+    <path
+        android:fillColor="#1B2B2B"
+        android:pathData="M97.8,62 A2.2,2.2 0 1 0 102.2,62 A2.2,2.2 0 1 0 97.8,62 Z"/>
+    <path
+        android:fillColor="#1B2B2B"
+        android:pathData="M82,70 H94 A2,2 0 0 1 96,72 V80 A2,2 0 0 1 94,82 H82 A2,2 0 0 1 80,80 V72 A2,2 0 0 1 82,70 Z"/>
+    <!-- Forearm strap and sensor, turned with the forearm about the elbow. -->
+    <group
+        android:pivotX="88"
+        android:pivotY="132"
+        android:rotation="-68">
+        <path
+            android:fillColor="#1B2B2B"
+            android:fillAlpha="0.22"
+            android:strokeColor="#1B2B2B"
+            android:strokeWidth="2"
+            android:pathData="M61,182 H115 A4,4 0 0 1 119,186 V198 A4,4 0 0 1 115,202 H61 A4,4 0 0 1 57,198 V186 A4,4 0 0 1 61,182 Z"/>
+        <path
+            android:fillColor="#1B2B2B"
+            android:fillAlpha="0.4"
+            android:strokeColor="#1B2B2B"
+            android:strokeWidth="2.5"
+            android:pathData="M73,175 H103 A5,5 0 0 1 108,180 V204 A5,5 0 0 1 103,209 H73 A5,5 0 0 1 68,204 V180 A5,5 0 0 1 73,175 Z"/>
+        <path
+            android:fillColor="#1B2B2B"
+            android:pathData="M73.8,182 A2.2,2.2 0 1 0 78.2,182 A2.2,2.2 0 1 0 73.8,182 Z"/>
+        <path
+            android:fillColor="#1B2B2B"
+            android:pathData="M81.8,182 A2.2,2.2 0 1 0 86.2,182 A2.2,2.2 0 1 0 81.8,182 Z"/>
+        <path
+            android:fillColor="#1B2B2B"
+            android:pathData="M89.8,182 A2.2,2.2 0 1 0 94.2,182 A2.2,2.2 0 1 0 89.8,182 Z"/>
+        <path
+            android:fillColor="#1B2B2B"
+            android:pathData="M97.8,182 A2.2,2.2 0 1 0 102.2,182 A2.2,2.2 0 1 0 97.8,182 Z"/>
+        <path
+            android:fillColor="#1B2B2B"
+            android:pathData="M82,190 H94 A2,2 0 0 1 96,192 V200 A2,2 0 0 1 94,202 H82 A2,2 0 0 1 80,200 V192 A2,2 0 0 1 82,190 Z"/>
+    </group>
+    <!-- Cables: slack between the two sensors, and a loose run up the arm. -->
+    <path
+        android:strokeColor="#1B2B2B"
+        android:strokeWidth="3"
+        android:strokeLineCap="round"
+        android:pathData="M96,89 C100,118 104,150 124,150 C134,150 136,144 139,139"/>
+    <path
+        android:strokeColor="#1B2B2B"
+        android:strokeWidth="3"
+        android:strokeLineCap="round"
+        android:pathData="M94,55 C98,36 80,22 90,0"/>
+</vector>

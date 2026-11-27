@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240" viewBox="0 0 240 240">
+  <!-- Side view, facing right: head, nose, trunk. -->
+  <circle cx="112" cy="31" r="22" fill="#1B2B2B" fill-opacity="0.08" stroke="#1B2B2B" stroke-width="4"/>
+  <path d="M133,25 L141,32 L133,37" fill="none" stroke="#1B2B2B" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="74" y="60" width="76" height="220" rx="34" fill="#1B2B2B" fill-opacity="0.08" stroke="#1B2B2B" stroke-width="4"/>
+  <!-- Upper arm: stays against the trunk in both frames. -->
+  <rect x="97" y="68" width="34" height="115" rx="17" fill="#1B2B2B" fill-opacity="0.22" stroke="#1B2B2B" stroke-width="4" stroke-linejoin="round"/>
+  <!-- Forearm and hand, turned about the elbow at (114,166). -->
+  <g transform="rotate(-148 114 166)">
+    <path d="M131,166 L127,224 A13,13 0 0 1 101,224 L97,166 A17,17 0 0 1 131,166 Z" fill="#1B2B2B" fill-opacity="0.22" stroke="#1B2B2B" stroke-width="4" stroke-linejoin="round"/>
+  </g>
+  <circle cx="114" cy="166" r="5" fill="#1B2B2B" stroke="none"/>
+</svg>

@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.pager.PagerState
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -19,8 +21,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -41,9 +45,10 @@ import com.example.app.ui.pairing.OutlineAction
 import com.example.app.ui.pairing.PairingPage
 import com.example.app.ui.theme.Teal
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.launch
 
 /**
- * Bicep Curl session: setup → healthy-arm calibration → reference curl → switch arm →
+ * Bicep Curl session: setup → placement guide → healthy-arm calibration → curl tutorial → reference curl → switch arm →
  * exercising-arm calibration → recording → summary. One route; the ViewModel owns the step.
  */
 @Composable
@@ -57,19 +62,26 @@ fun ExerciseFlowScreen(
     val state by viewModel.state.collectAsState()
     var confirmLeave by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { viewModel.onOpened() }
+    val scope = rememberCoroutineScope()
+    // One pager per placement guide (healthy arm, then exercising arm), so each starts on its first page.
+    val guidePager = key(state.sessionId, state.step == FlowStep.SWITCH_ARM) { rememberPagerState { PlacementPages.size } }
 
-    val leave = {
-        when (state.step) {
-            FlowStep.RECORDING, FlowStep.FINISHING -> Unit // must Stop first (or end while disconnected)
-            FlowStep.SETUP, FlowStep.SUMMARY -> { viewModel.cancelFlow(); onExit() }
-            else -> confirmLeave = true
+    val leave: () -> Unit = {
+        when (backAction(state.step, guidePager.currentPage)) {
+            BackAction.IGNORE -> Unit // must Stop first (or end while disconnected)
+            BackAction.PREVIOUS_GUIDE_PAGE -> scope.launch { guidePager.animateScrollToPage(guidePager.currentPage - 1) }
+            BackAction.BACK_TO_SETUP -> viewModel.backToSetup()
+            BackAction.EXIT -> { viewModel.cancelFlow(); onExit() }
+            BackAction.CONFIRM_LEAVE -> confirmLeave = true
         }
     }
     BackHandler(enabled = state.step != FlowStep.SUMMARY) { leave() }
 
     val title = when (state.step) {
         FlowStep.SETUP -> "Bicep Curl"
+        FlowStep.PLACEMENT -> "Put On Your ReBand"
         FlowStep.REFERENCE_CALIBRATION, FlowStep.REFERENCE_RECORD, FlowStep.REFERENCE_REVIEW -> "Healthy Arm Reference"
+        FlowStep.TUTORIAL -> "How to Curl"
         FlowStep.SWITCH_ARM -> "Switch Arms"
         FlowStep.EXERCISE_CALIBRATION, FlowStep.READY -> "Prepare Exercising Arm"
         FlowStep.RECORDING, FlowStep.FINISHING -> "Bicep Curl"
@@ -87,15 +99,17 @@ fun ExerciseFlowScreen(
 
         when (state.step) {
             FlowStep.SETUP -> SetupStep(state, viewModel)
+            FlowStep.PLACEMENT -> PlacementStep(state, viewModel, guidePager)
             FlowStep.REFERENCE_CALIBRATION -> CalibrationStep(
                 state, viewModel,
                 intro = "First, the wearable learns your healthy arm (${state.referenceArm?.label?.lowercase()}). " +
                     "Put the ReBand on your healthy arm, then follow the three steps.",
                 armLabel = "healthy ${state.referenceArm?.label?.lowercase()}",
             )
+            FlowStep.TUTORIAL -> TutorialStep(state, viewModel)
             FlowStep.REFERENCE_RECORD -> ReferenceRecordStep(state, viewModel)
             FlowStep.REFERENCE_REVIEW -> ReferenceReviewStep(state, viewModel)
-            FlowStep.SWITCH_ARM -> SwitchArmStep(state, viewModel)
+            FlowStep.SWITCH_ARM -> SwitchArmStep(state, viewModel, guidePager)
             FlowStep.EXERCISE_CALIBRATION -> CalibrationStep(
                 state, viewModel,
                 intro = "Now calibrate the wearable on your exercising arm (${state.exercisingArm?.label?.lowercase()}).",
@@ -134,7 +148,7 @@ private fun SetupStep(state: ExerciseUiState, vm: ExerciseViewModel) {
     ReBandCard {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Exercise", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text("Bicep Curl", style = MaterialTheme.typography.titleLarge)
+            Text(exerciseSummary(INTRO_SETS, INTRO_REPS_PER_SET, INTRO_MINUTES), style = MaterialTheme.typography.titleLarge)
             Text(
                 "You'll do one reference curl with your healthy arm, then your exercise set with the other arm.",
                 style = MaterialTheme.typography.bodyMedium,
@@ -142,6 +156,7 @@ private fun SetupStep(state: ExerciseUiState, vm: ExerciseViewModel) {
             )
         }
     }
+    MeasuredCards()
     Text("Which arm are you exercising today?", style = MaterialTheme.typography.titleMedium)
     Arm.entries.forEach { arm ->
         val selected = state.exercisingArm == arm
@@ -260,20 +275,14 @@ private fun Metric(label: String, value: String) {
 }
 
 @Composable
-private fun SwitchArmStep(state: ExerciseUiState, vm: ExerciseViewModel) {
+private fun SwitchArmStep(state: ExerciseUiState, vm: ExerciseViewModel, pager: PagerState) {
+    val arm = placementArm(state.step, state.exercisingArm) ?: return
     MessageBanner("Healthy-arm reference saved.", isError = false)
-    ReBandCard {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Move the wearable to your ${state.exercisingArm?.label?.lowercase()}", style = MaterialTheme.typography.titleMedium)
-            Text(
-                "Take the ReBand off your healthy arm and strap it to your exercising arm the same way round: " +
-                    "upper-arm sensor above the elbow, forearm sensor below it, EMG sensor on the biceps. " +
-                    "The wearable is calibrated again for this arm in the next step.",
-                style = MaterialTheme.typography.bodyLarge,
-            )
-        }
-    }
-    PrimaryButton("The wearable is on my exercising arm", onClick = vm::confirmArmSwitched)
+    Instruction(
+        "Take the ReBand off your healthy arm and put it on your exercising arm (${arm.label.lowercase()}) the same way. " +
+            "The wearable is calibrated again for this arm in the next step.",
+    )
+    PlacementGuide(arm, pager, onDone = vm::confirmArmSwitched)
 }
 
 @Composable
@@ -286,6 +295,7 @@ private fun ReadyStep(state: ExerciseUiState, vm: ExerciseViewModel) {
             if (state.targetReps > 0) {
                 Text("The wearable ends the set by itself after ${state.targetReps} reps.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
+            state.exercisingArm?.let { CurlAnimation(it, frame = 96.dp, modifier = Modifier.align(Alignment.CenterHorizontally)) }
         }
     }
     Waiting(state)

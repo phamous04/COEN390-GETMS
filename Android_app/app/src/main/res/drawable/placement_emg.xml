@@ -1,0 +1,73 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="240dp"
+    android:height="240dp"
+    android:viewportWidth="240"
+    android:viewportHeight="240">
+    <!-- Converted from Android_app/art/placement_emg.svg. Edit the SVG, then convert it again. -->
+    <!-- Front view of the right arm: shoulder at the top, trunk on the right. -->
+    <path
+        android:fillColor="#1B2B2B"
+        android:fillAlpha="0.05"
+        android:pathData="M216,-40 H268 A44,44 0 0 1 312,4 V246 A44,44 0 0 1 268,290 H216 A44,44 0 0 1 172,246 V4 A44,44 0 0 1 216,-40 Z"/>
+    <path
+        android:fillColor="#1B2B2B"
+        android:fillAlpha="0.1"
+        android:strokeColor="#1B2B2B"
+        android:strokeWidth="3"
+        android:strokeLineJoin="round"
+        android:pathData="M76,58 A42,42 0 0 1 160,58 L160,166 L150,260 L86,260 L76,166 Z"/>
+    <path
+        android:strokeColor="#1B2B2B"
+        android:strokeWidth="2.5"
+        android:strokeAlpha="0.5"
+        android:strokeLineCap="round"
+        android:pathData="M96,176 Q118,186 140,176"/>
+    <!-- Biceps belly, with the direction of the muscle fibres (along the arm). -->
+    <path
+        android:fillColor="#1B2B2B"
+        android:fillAlpha="0.1"
+        android:pathData="M90,100 A28,62 0 1 0 146,100 A28,62 0 1 0 90,100 Z"/>
+    <path
+        android:strokeColor="#1B2B2B"
+        android:strokeWidth="2"
+        android:strokeAlpha="0.4"
+        android:strokeLineCap="round"
+        android:pathData="M105,50 L105,150"/>
+    <path
+        android:strokeColor="#1B2B2B"
+        android:strokeWidth="2"
+        android:strokeAlpha="0.4"
+        android:strokeLineCap="round"
+        android:pathData="M118,44 L118,156"/>
+    <path
+        android:strokeColor="#1B2B2B"
+        android:strokeWidth="2"
+        android:strokeAlpha="0.4"
+        android:strokeLineCap="round"
+        android:pathData="M131,50 L131,150"/>
+    <!-- MyoWare 2.0 board: MID electrode on the middle of the belly, END in line with the fibres. -->
+    <path
+        android:fillColor="#1B2B2B"
+        android:fillAlpha="0.4"
+        android:strokeColor="#1B2B2B"
+        android:strokeWidth="2.5"
+        android:pathData="M105,80 H131 A7,7 0 0 1 138,87 V137 A7,7 0 0 1 131,144 H105 A7,7 0 0 1 98,137 V87 A7,7 0 0 1 105,80 Z"/>
+    <path
+        android:fillColor="#1B2B2B"
+        android:pathData="M109,100 A9,9 0 1 0 127,100 A9,9 0 1 0 109,100 Z"/>
+    <path
+        android:fillColor="#1B2B2B"
+        android:pathData="M109,125 A9,9 0 1 0 127,125 A9,9 0 1 0 109,125 Z"/>
+    <!-- REF electrode on its lead, beside the muscle belly (MyoWare 2.0 Quick Start Guide). -->
+    <path
+        android:strokeColor="#1B2B2B"
+        android:strokeWidth="3"
+        android:strokeLineCap="round"
+        android:pathData="M98,108 C90,106 84,112 84,120"/>
+    <path
+        android:fillColor="#1B2B2B"
+        android:fillAlpha="0.4"
+        android:strokeColor="#1B2B2B"
+        android:strokeWidth="2.5"
+        android:pathData="M75,130 A9,9 0 1 0 93,130 A9,9 0 1 0 75,130 Z"/>
+</vector>

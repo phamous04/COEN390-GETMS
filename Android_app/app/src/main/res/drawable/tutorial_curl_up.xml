@@ -1,0 +1,50 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="240dp"
+    android:height="240dp"
+    android:viewportWidth="240"
+    android:viewportHeight="240">
+    <!-- Converted from Android_app/art/tutorial_curl_up.svg. Edit the SVG, then convert it again. -->
+    <!-- Side view, facing right: head, nose, trunk. -->
+    <path
+        android:fillColor="#1B2B2B"
+        android:fillAlpha="0.08"
+        android:strokeColor="#1B2B2B"
+        android:strokeWidth="4"
+        android:pathData="M90,31 A22,22 0 1 0 134,31 A22,22 0 1 0 90,31 Z"/>
+    <path
+        android:strokeColor="#1B2B2B"
+        android:strokeWidth="4"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M133,25 L141,32 L133,37"/>
+    <path
+        android:fillColor="#1B2B2B"
+        android:fillAlpha="0.08"
+        android:strokeColor="#1B2B2B"
+        android:strokeWidth="4"
+        android:pathData="M108,60 H116 A34,34 0 0 1 150,94 V246 A34,34 0 0 1 116,280 H108 A34,34 0 0 1 74,246 V94 A34,34 0 0 1 108,60 Z"/>
+    <!-- Upper arm: stays against the trunk in both frames. -->
+    <path
+        android:fillColor="#1B2B2B"
+        android:fillAlpha="0.22"
+        android:strokeColor="#1B2B2B"
+        android:strokeWidth="4"
+        android:strokeLineJoin="round"
+        android:pathData="M114,68 H114 A17,17 0 0 1 131,85 V166 A17,17 0 0 1 114,183 H114 A17,17 0 0 1 97,166 V85 A17,17 0 0 1 114,68 Z"/>
+    <!-- Forearm and hand, turned about the elbow at (114,166). -->
+    <group
+        android:pivotX="114"
+        android:pivotY="166"
+        android:rotation="-148">
+        <path
+            android:fillColor="#1B2B2B"
+            android:fillAlpha="0.22"
+            android:strokeColor="#1B2B2B"
+            android:strokeWidth="4"
+            android:strokeLineJoin="round"
+            android:pathData="M131,166 L127,224 A13,13 0 0 1 101,224 L97,166 A17,17 0 0 1 131,166 Z"/>
+    </group>
+    <path
+        android:fillColor="#1B2B2B"
+        android:pathData="M109,166 A5,5 0 1 0 119,166 A5,5 0 1 0 109,166 Z"/>
+</vector>
